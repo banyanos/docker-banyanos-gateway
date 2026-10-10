@@ -1,0 +1,207 @@
+# =============================================================================
+# SilvaEngine Gateway — Banyan production data plane (P0 minimal delivery, no nginx)
+#
+#   cd docker-banyanos-gateway && cp <env block, see README §2> .env && docker compose up -d
+#
+# Architecture: browser/frontend → gateway (single FastAPI container, 12 engines
+#   dispatched in-process) → postgres / neo4j / redis; se-configdata settings
+#   are read from real cloud DynamoDB by default (read once at startup,
+#   read-only), with DynamoDB Local as an optional variant (see end of file).
+#
+# Gateway image requirements (delivered in P1 by the docker-silvaengine-gateway repo):
+#   The image must contain both the gateway and the Banyan runtime —
+#   the silvaengine_gateway package + framework (silvaengine_base /
+#   silvaengine_utility / silvaengine_connections / silvaengine_dynamodb_base)
+#   + the 12 business engines, with PYTHONPATH using the layout proven in
+#   api-runtime: /app/vendor:/app:/app/modules/<12 engine repo roots>.
+#   Missing any path entry makes that engine's import fail → auth layer
+#   Permission denied → blanket 403 (the same pitfall api-runtime hit;
+#   include everything).
+#
+# All services share json-file log rotation (10MB × 3); startup order is
+# enforced by depends_on + healthcheck.
+# =============================================================================
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  gateway:
+    # Extended image (see header). GATEWAY_IMAGE is set in .env, e.g. the
+    # Banyan gateway image built by the docker-silvaengine-gateway repo.
+    image: ${GATEWAY_IMAGE:?set GATEWAY_IMAGE in .env}
+    container_name: silvaengine-gateway
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./.env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      # Banyan hosting switches (Banyan hosting built into the gateway):
+      #   SETTING_SOURCE=se-configdata → overlay the DDB record onto the
+      #     setting at startup (DDB keys win)
+      #   ENDPOINT_ID/ADAPTER_STAGE/ADAPTER_AREA → form the se-configdata
+      #     setting_id ({stage}_{area}_{endpoint_id}); the PermAuthorizer
+      #     auth bridge and path normalizer mount per the route manifest's
+      #     auth_bridge, independent of ENDPOINT_ID
+      - SETTING_SOURCE=se-configdata
+      - ENDPOINT_ID=${ENDPOINT_ID:-banyan}
+      - ADAPTER_STAGE=${ADAPTER_STAGE:-beta}
+      - ADAPTER_AREA=${ADAPTER_AREA:-core}
+      # Cross-engine httpx pool loopback: engine-to-engine calls inside the
+      # container bypass the cloud API Gateway and go through this gateway
+      # (the auth bridge verifies engine service tokens — same code path as
+      # frontend calls). base_url is rewritten to this value at startup;
+      # engines' upstream LLM calls pass absolute URLs and are unaffected.
+      - BANYAN_LOOPBACK_BASE_URL=${BANYAN_LOOPBACK_BASE_URL:-http://127.0.0.1:8000/beta/core/banyan}
+      - SE_CONFIGDATA_TABLE=${SE_CONFIGDATA_TABLE:-se-configdata}
+      # For the DDB Local variant, set SE_CONFIGDATA_ENDPOINT_URL in .env to pass it through
+      - SE_CONFIGDATA_ENDPOINT_URL=${SE_CONFIGDATA_ENDPOINT_URL:-}
+      # capability_engine loops back to this gateway's mcp_protocol_plugin routes
+      # (/{endpoint_id}/mcp_daemon_graphql etc., the gateway's native single-segment
+      # paths, no stage/area prefix). A capability_mcp_gateway_base_url in
+      # se-configdata takes precedence.
+      - CAPABILITY_MCP_GATEWAY_BASE_URL=${CAPABILITY_MCP_GATEWAY_BASE_URL:-http://127.0.0.1:8000}
+    command:
+      - uvicorn
+      - silvaengine_gateway.app:create_app_from_env
+      - --factory
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    # In-flight GraphQL requests can take tens of seconds; allow enough drain
+    # time on restart/pull
+    stop_grace_period: 30s
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5); sys.exit(0 if r.status==200 else 1)",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    logging: *default-logging
+
+  postgres:
+    # Unified store for relational/log data (shared by the 12 engines; audit/
+    # telemetry pools use separate databases on the same instance or the same DB)
+    image: ${DOCKER_MIRROR_PREFIX:-docker.1ms.run/library/}postgres:16
+    container_name: silvaengine-gateway-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:?set POSTGRES_USER in .env}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      - POSTGRES_DB=${POSTGRES_DB:?set POSTGRES_DB in .env}
+    volumes:
+      - gateway-pg-data:/var/lib/postgresql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -q"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging: *default-logging
+
+  neo4j:
+    # Sole store for graph and vector data (knowledge-graph entities/relations,
+    # memory link edges, embedding vectors)
+    image: ${DOCKER_MIRROR_PREFIX:-docker.1ms.run/library/}neo4j:5.26-ubi10
+    container_name: silvaengine-gateway-neo4j
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      - NEO4J_AUTH=${NEO4J_AUTH:?set NEO4J_AUTH in .env}
+      - NEO4J_server_memory_heap_initial__size=512m
+      - NEO4J_server_memory_heap_max__size=1G
+      # Explicit pagecache cap (the default can reach 50% of host RAM, an OOM
+      # risk on small machines)
+      - NEO4J_server_memory_pagecache_size=256m
+    volumes:
+      - gateway-neo4j-data:/data
+      - gateway-neo4j-logs:/logs
+    restart: unless-stopped
+    stop_grace_period: 30s
+    healthcheck:
+      # No wget/curl in the image; probe the bolt port via bash /dev/tcp
+      # (proven in api-runtime)
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/7687'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    logging: *default-logging
+
+  redis:
+    # Transient data: short-lived tokens, verification codes, MFA sessions; AOF persistence
+    image: ${DOCKER_MIRROR_PREFIX:-docker.1ms.run/library/}redis:7
+    container_name: silvaengine-gateway-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env} --appendonly yes
+    environment:
+      # redis-cli reads REDISCLI_AUTH natively — password-free healthcheck ping
+      - REDISCLI_AUTH=${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+    volumes:
+      - gateway-redis-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Optional variant: DynamoDB Local (fully offline; se-configdata uses a local table)
+  #
+  # To enable:
+  #   1. Uncomment the service below, then `docker compose up -d ddb-local`
+  #   2. Load the table with a real/seed record:
+  #      python scripts/seed_seconfig.py --file env/se-configdata.local.json \
+  #          --endpoint-url http://127.0.0.1:8001 --apply
+  #   3. Set in .env: SE_CONFIGDATA_ENDPOINT_URL=http://ddb-local:8000
+  #      (containers reach it via the service name ddb-local; load the table
+  #      from the host via 127.0.0.1:8001)
+  #   4. Restart gateway so the setting reloads
+  # Note: amazon/dynamodb-local is not a Docker Hub official image, so the
+  # mirror path has no library/ segment and DOCKER_MIRROR_PREFIX does not apply.
+  # ---------------------------------------------------------------------------
+  # ddb-local:
+  #   image: amazon/dynamodb-local:latest
+  #   container_name: silvaengine-gateway-ddb-local
+  #   ports:
+  #     - "8001:8000"
+  #   command: ["-jar", "DynamoDBLocal.jar", "-inMemory", "-sharedDb"]
+  #   restart: unless-stopped
+  #   logging: *default-logging
+
+volumes:
+  gateway-pg-data:
+    name: silvaengine-gateway_pg-data
+  gateway-neo4j-data:
+    name: silvaengine-gateway_neo4j-data
+  gateway-neo4j-logs:
+    name: silvaengine-gateway_neo4j-logs
+  gateway-redis-data:
+    name: silvaengine-gateway_redis-data

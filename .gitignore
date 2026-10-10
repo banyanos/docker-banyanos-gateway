@@ -1,0 +1,3 @@
+# Local deploy secrets and the generated seed record (created by deploy.sh; never commit to any repo)
+.env
+env/*.local.json

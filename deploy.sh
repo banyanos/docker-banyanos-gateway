@@ -20,6 +20,8 @@
 #   bash deploy.sh status         # status and health check
 #   bash deploy.sh down [-v]      # stop and clean up (-v also deletes data volumes)
 #   bash deploy.sh --restart      # restart gateway after deploy (after source/JSON edits)
+#   bash deploy.sh --bump         # bump SilvaEngine pins to the latest main, then deploy
+#   bash deploy.sh --bump=staging # same for staging (also --bump=dev; main where a repo lacks the branch)
 #   bash deploy.sh --force-env    # regenerate .env and the seed JSON (passwords change)
 #   bash deploy.sh --dry-run      # run stages 1-3 only (generate .env/JSON, no containers)
 #   bash deploy.sh --self-test    # built-in pure-logic self-test (no docker)
@@ -69,6 +71,8 @@ WAIT_TIMEOUT="${GATEWAY_WAIT_TIMEOUT:-600}"
 FORCE_ENV=0
 DRY_RUN=0
 RESTART=0
+BUMP=0
+BUMP_BRANCH="main"
 VOLUMES=0
 MODE="up"
 
@@ -120,6 +124,10 @@ SilvaEngine Gateway — Banyan 一键部署（模式 A：DynamoDB Local）
 
 选项:
   --restart   部署后重启 gateway（修改源码/种子 JSON 后使用）
+  --bump[=main|dev|staging]
+              部署前把 SilvaEngine 依赖 pin 切换并升到该分支最新提交（默认 main；
+              无该分支的仓库回退 main；scripts/bump_silvaengine.sh）。
+              不加则按 requirements 现有 SHA 构建
   --force-env 删除并重新生成 .env 与种子 JSON（密码会变更）
   --dry-run   只跑阶段 1-3（环境检测/配置生成/校验/端口预检），不起容器
   --self-test 内置纯逻辑自检（不碰 docker）
@@ -587,6 +595,13 @@ cmd_up() {
   set_stage 2 "配置生成与源码树校验" \
     "源路径可用环境变量覆盖（bash deploy.sh -h 查看清单）；.env 改动后重跑即生效；--force-env 重新生成"
   ensure_config
+  if [ "$BUMP" = "1" ]; then
+    log "--bump：把 requirements-silvaengine.txt 的 SilvaEngine pin 切换并升到 $BUMP_BRANCH 分支最新提交"
+    bump_args=(--branch "$BUMP_BRANCH")
+    [ "$DRY_RUN" = "1" ] && bump_args+=(--dry-run)
+    bash "$DEPLOY_DIR/scripts/bump_silvaengine.sh" ${bump_args[@]+"${bump_args[@]}"} \
+      || die "SilvaEngine pin 更新失败（requirements 未改动）；检查 GitHub SSH 访问后重跑，或去掉 --bump 按现有 pin 部署"
+  fi
 
   set_stage 3 "端口预检（${HOST_PORTS[*]}）" \
     "占用排查：lsof -i :<port>（macOS）/ ss -ltnp | grep :<port>（Linux）"
@@ -793,6 +808,12 @@ for arg in "$@"; do
     down) MODE="down" ;;
     --volumes|-v) VOLUMES=1 ;;
     --restart) RESTART=1 ;;
+    --bump) BUMP=1; BUMP_BRANCH="main" ;;
+    --bump=main|--bump=dev|--bump=staging) BUMP=1; BUMP_BRANCH="${arg#--bump=}" ;;
+    --bump=*)
+      printf '错误：--bump 仅支持 main/dev/staging（其他分支请直接运行 scripts/bump_silvaengine.sh --branch NAME）\n' >&2
+      exit 1
+      ;;
     --force-env) FORCE_ENV=1 ;;
     --dry-run) DRY_RUN=1 ;;
     --self-test) MODE="selftest" ;;

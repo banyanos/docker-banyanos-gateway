@@ -171,10 +171,42 @@ docker compose -f docker-compose.yml -f docker-compose.bindmount.yml logs -f gat
 For DynamoDB Local include `-f docker-compose.ddb.yml` or run `bash deploy.sh`.
 Package installation happens at build time. Container restarts do not run pip.
 Banyanos source changes take effect after `docker compose ... restart gateway`.
-SilvaEngine changes require rebuilding the image; to fetch newer commits at
-the same `@main` reference, use `build --no-cache gateway` and recreate the
-gateway with `up -d gateway`. Pin Git references to release tags or commits
-for repeatable releases.
+SilvaEngine changes require rebuilding the image. `requirements-silvaengine.txt`
+pins every repository to a commit SHA, so builds are repeatable: a plain
+`bash deploy.sh` or `build gateway` always installs exactly the pinned commits.
+
+### 7.2.1 Bumping SilvaEngine pins
+
+The trailing `# <branch>` comment on each requirements line is the branch that
+pin tracks (no comment means `main`; pip ignores it). That comment is the
+branch configuration: edit it by hand, or let `--branch` rewrite it.
+`scripts/bump_silvaengine.sh` moves each pin to the head of its tracked branch,
+prints the commits added/removed per repo, and writes nothing if any repo
+cannot be resolved.
+
+```bash
+bash scripts/bump_silvaengine.sh --dry-run        # preview
+bash scripts/bump_silvaengine.sh                  # bump on tracked branches
+bash scripts/bump_silvaengine.sh --staging       # switch to staging (main where no staging branch exists)
+bash scripts/bump_silvaengine.sh --dev           # switch to dev (main where no dev branch exists)
+bash scripts/bump_silvaengine.sh --main          # switch back to main
+bash scripts/bump_silvaengine.sh --branch prod   # any other branch name
+bash scripts/bump_silvaengine.sh --only silvaengine_gateway --staging
+bash scripts/bump_silvaengine.sh --build         # bump + build + recreate gateway (cloud DDB compose)
+bash deploy.sh --bump                            # bump to latest main, then the full DDB Local deploy
+bash deploy.sh --bump=staging                    # switch to staging + bump, then deploy
+bash deploy.sh --bump=dev                        # switch to dev + bump, then deploy
+```
+
+`deploy.sh --bump` defaults to `main` and accepts only `main`, `dev` or
+`staging`; any other branch goes through `bump_silvaengine.sh --branch NAME`.
+Running the bump script with no branch option keeps each repo on the branch
+recorded in the requirements file.
+
+A changed pin changes the requirements file, which busts the pip layer cache,
+so no `--no-cache` build is needed. Commit the requirements diff after the
+gateway passes its checks; `git revert` + rebuild rolls a bump back. Switch to
+release tags once the repositories publish them.
 
 ### 7.3 Acceptance
 

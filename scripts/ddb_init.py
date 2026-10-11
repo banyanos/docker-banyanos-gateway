@@ -3,8 +3,8 @@
 """Idempotent DynamoDB Local bootstrap for the Banyan-hosting gateway.
 
 Runs INSIDE a container (python:3.12-slim + pip install boto3) as the
-one-shot ``ddb-init`` compose service (deploy/docker-compose.ddb.yml).
-The host side is ``deploy/deploy.sh`` — this script never needs Python
+one-shot ``ddb-init`` compose service (docker-compose.ddb.yml).
+The host side is ``deploy.sh`` — this script never needs Python
 or boto3 on the host.
 
 Sequence (every step idempotent — safe to re-run on each deploy, which

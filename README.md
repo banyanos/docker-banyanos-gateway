@@ -28,7 +28,7 @@ gateway (FastAPI, uvicorn :8000)
 
 镜像：`GATEWAY_IMAGE` 必须是含 12 引擎 + 框架的扩展镜像（P1 由
 `docker-silvaengine-gateway` 仓构建；PYTHONPATH 布局
-`/app/vendor:/app:/app/modules/<12 引擎仓根>`，与 api-runtime 已验证形态一致）。
+`/app/modules/<12 引擎仓根>`（SilvaEngine 包由 pip 安装到 site-packages），与 api-runtime 已验证形态一致）。
 
 AWS：默认读真实云端 `se-configdata`（`beta_core_banyan` 记录，**只读**），
 凭证需有该表读权限；完全离线用文末 DDB Local 变体。
@@ -117,69 +117,70 @@ python scripts/seed_seconfig.py --file env/se-configdata.local.json \
 - staging se-configdata 的真实记录值（尤其 `httpx_llm` 等池形态）以
   probe 实测为准；发现与模板不一致时以记录为准修模板。
 
-## 7. bind-mount 变体（免镜像构建的容器验收）
+## 7. Pip-installed SilvaEngine + local Banyanos source
 
-P0 容器验收可在网关镜像构建前先行：`docker-compose.bindmount.yml` Overlay
-复用 base 的 gateway 服务定义，仅覆写为纯 `python:3.12-slim` + 运行面全部
-bind-mount 注入（源文件修改后容器重启即生效，与 api-runtime 服务器部署
-模式一致）。**P1 镜像仍是生产交付物**；两条路径共用同一份
-`requirements-bindmount.txt` 与同一 PYTHONPATH 布局，验收结论可互相迁移。
+The overlay builds a Python 3.12 image. Pip installs the gateway, six shared
+SilvaEngine framework packages, and the MCP daemon/plugin/client from the
+private GitHub repositories in `requirements-silvaengine.txt`. Third-party
+dependencies come from `requirements-bindmount.txt`. Only the 12 Banyanos
+engines are mounted from local source at `/app/modules`.
 
-挂载点全部平铺在 `/app`（容器 rootfs 目录）下、互不嵌套——嵌套 bind-mount
-会在宿主机源目录内创建挂载点，污染源仓的 git 状态。
+### 7.1 SSH key and environment
 
-### 7.1 .env 增补
+Place a GitHub SSH private key with read access to **every** repository listed
+in `requirements-silvaengine.txt` at `.ssh/id_ed25519` in this directory.
+Add its public key to the appropriate GitHub account or repository deploy-key
+configuration. On Linux/macOS:
 
-在 §2 的 `.env` 基础上追加（compose 路径变量全部 `:?` 守卫，缺一即报错）：
+```bash
+mkdir -p .ssh
+# Put your private key at .ssh/id_ed25519, then:
+chmod 700 .ssh
+chmod 600 .ssh/id_ed25519
+```
+
+The key is ignored by Git, excluded from the Docker build context, and passed
+as a BuildKit secret only during installation. It is never copied into the
+image or mounted in the running gateway. The build needs GitHub SSH access
+(port 22) and access to the pip index. SSH host checking uses a known_hosts
+file populated by ssh-keyscan during the build.
+
+Add to the environment from section 2:
 
 ```dotenv
-# --- bind-mount 变体（Overlay 模式）---
-# 必填占位：base 文件里的 ${GATEWAY_IMAGE:?} 守卫在 Overlay 模式下仍会
-# 插值求值（image 虽被覆写，变量仍必须存在）
-GATEWAY_IMAGE=bindmount-placeholder
-
-# --- 运行面源路径（本机示例，按实际工作区调整）---
-GATEWAY_PACKAGE_DIR=/Users/<you>/Workspace/ideabosque/silvaengine_gateway/silvaengine_gateway
-BANYAN_MODULES_DIR=/Users/<you>/Workspace/ideabosque/banyan/modules
-SILVAENGINE_BASE_DIR=/Users/<you>/Workspace/ideabosque/silvaengine_base
-SILVAENGINE_UTILITY_DIR=/Users/<you>/Workspace/ideabosque/silvaengine_utility
-SILVAENGINE_CONNECTIONS_DIR=/Users/<you>/Workspace/ideabosque/silvaengine_connections
-# 框架仓给 repo 根或包目录均可 —— 启动探测脚本自动适配两种布局
-
-# vendor 快照（constants / definitions / dynamodb_base 三个包，api-runtime
-# 已验证形态）
-VENDOR_DIR=/Users/<you>/Workspace/docker/api-runtime/vendor
-
-# --- 可选 ---
-# PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/   # 默认即此
+GATEWAY_IMAGE=banyanos-gateway:local
+BANYAN_MODULES_DIR=C:/Users/bibo7/gitrepo/banyanos
+SSH_PRIVATE_KEY_FILE=./.ssh/id_ed25519
+# Alternatively point SSH_PRIVATE_KEY_FILE at an existing private key.
+# PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 # SILVAENGINE_CACHE_TTL=300
 ```
 
-### 7.2 启动
+Existing gateway/framework/vendor/MCP path variables can be removed; the
+overlay and deploy script no longer use them. Keep existing passwords and
+seed configuration when migrating.
+
+### 7.2 Build and start
 
 ```bash
-cd docker-banyanos-gateway
+docker compose -f docker-compose.yml -f docker-compose.bindmount.yml build gateway
 docker compose -f docker-compose.yml -f docker-compose.bindmount.yml up -d
-docker compose -f docker-compose.yml -f docker-compose.bindmount.yml ps
 docker compose -f docker-compose.yml -f docker-compose.bindmount.yml logs -f gateway
 ```
 
-需 Docker Compose v2（environment / healthcheck 与 base 按映射逐键合并，
-`SETTING_SOURCE` / `ENDPOINT_ID` / AWS 凭据等 env 注入全部继承）。
+For DynamoDB Local include `-f docker-compose.ddb.yml` or run `bash deploy.sh`.
+Package installation happens at build time. Container restarts do not run pip.
+Banyanos source changes take effect after `docker compose ... restart gateway`.
+SilvaEngine changes require rebuilding the image; to fetch newer commits at
+the same `@main` reference, use `build --no-cache gateway` and recreate the
+gateway with `up -d gateway`. Pin Git references to release tags or commits
+for repeatable releases.
 
-首次启动 pip 全量安装 `requirements-bindmount.txt`（约 1–3 分钟，取决于
-镜像源），healthcheck 的 start_period 已放宽到 300s；后续重启命中 pip-cache
-命名卷秒级完成。日志出现
-`[entrypoint] silvaengine_base: repo-root layout detected, PYTHONPATH += /app/silvaengine_base`
-说明双布局探测按预期生效。
+### 7.3 Acceptance
 
-### 7.3 验收与切换
-
-- **验收**：§5 六步验收清单不变——bind-mount 或镜像任一变体通过即认可。
-- **切回生产镜像模式**：`docker compose down`（不加 `-v`，数据卷保留）后，
-  单文件 `docker compose up -d` 启动即可，bindmount Overlay 不参与。
-- **源码修改热更**：网关 / 引擎 / 框架源文件在宿主机修改后，
-  `docker compose restart gateway` 即生效（bind-mount 直读宿主机路径）。
+Use the acceptance checks in section 5. The base compose alone still supports
+a prebuilt image; that image must supply both the dependencies and Banyanos
+engines if the source overlay is omitted.
 
 ## 8. 一键部署脚本 deploy.sh（模式 A 全自动）
 
@@ -191,16 +192,9 @@ Python / jq / awscli；每阶段有状态输出，失败给出具体原因与排
 
 ### 8.1 服务器准备（一次性）
 
-源码树按相对布局同步（本项目与 silvaengine_gateway、三框架仓、MCP 仓、banyan/modules 同在工作区下；本机布局见 deploy.sh 中 PARENT_DIR 说明）：
-
-```bash
-# 三框架仓与 banyan/modules 同在 ideabosque/ 下随本条同步
-rsync -a --exclude .git --exclude .venv --exclude node_modules \
-    --exclude __pycache__ <本机>/ideabosque/ server:/srv/ideabosque/
-# vendor 快照（探测顺序：工作区根下 docker/api-runtime/vendor）
-rsync -a --exclude .git <本机>/Workspace/docker/api-runtime/vendor \
-    server:/srv/Workspace/docker/api-runtime/
-```
+同步本项目与 12 个 Banyanos 引擎目录，设置 `BANYAN_MODULES_DIR` 指向引擎仓根目录。
+SilvaEngine 仓与 vendor 快照无需同步。按 §7.1 放置 GitHub SSH 私钥；
+首次构建需要访问 GitHub 与 pip 索引，DynamoDB Local 仅替代云端配置数据库。
 
 ### 8.2 命令
 
@@ -216,10 +210,8 @@ rsync -a --exclude .git <本机>/Workspace/docker/api-runtime/vendor \
 | `bash deploy.sh --self-test` | 内置纯逻辑自检（不碰 docker） |
 
 环境变量（首次生成 `.env` 前生效）：`TENANT_PART_ID`（默认 nestaging）、
-`GATEWAY_PACKAGE_DIR` / `BANYAN_MODULES_DIR` / `SILVAENGINE_BASE_DIR` /
-`SILVAENGINE_UTILITY_DIR` / `SILVAENGINE_CONNECTIONS_DIR` / `VENDOR_DIR`
-（源路径覆盖，优先于自动探测）；`GATEWAY_WAIT_TIMEOUT`（健康等待上限，
-默认 600s）随时可设。
+`BANYAN_MODULES_DIR`（优先于自动探测）和 `SSH_PRIVATE_KEY_FILE`
+（默认 `./.ssh/id_ed25519`）。`GATEWAY_WAIT_TIMEOUT` 随时可设。
 
 ### 8.3 设计要点
 

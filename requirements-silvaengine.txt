@@ -1,0 +1,13 @@
+# Shared framework, gateway, and MCP packages installed by pip from private GitHub repos.
+# Pin @main to a release tag or commit when promoting a reproducible deployment.
+# Install --no-deps after requirements-bindmount.txt (the explicit runtime dependency set).
+git+ssh://git@github.com/ideabosque/silvaengine_constants.git@main#egg=silvaengine_constants
+git+ssh://git@github.com/ideabosque/silvaengine_utility.git@main#egg=silvaengine_utility
+git+ssh://git@github.com/ideabosque/silvaengine_dynamodb_base.git@main#egg=silvaengine_dynamodb_base
+git+ssh://git@github.com/ideabosque/silvaengine_definitions.git@main#egg=silvaengine_definitions
+git+ssh://git@github.com/ideabosque/silvaengine_connections.git@main#egg=silvaengine_connections
+git+ssh://git@github.com/ideabosque/silvaengine_base.git@main#egg=silvaengine_base
+git+ssh://git@github.com/ideabosque/mcp_http_client.git@main#egg=mcp_http_client
+git+ssh://git@github.com/ideabosque/silvaengine_daemon.git@main#egg=silvaengine_daemon
+git+ssh://git@github.com/ideabosque/mcp_protocol_plugin.git@main#egg=mcp_protocol_plugin
+git+ssh://git@github.com/ideabosque/silvaengine_gateway.git@main#egg=silvaengine_gateway

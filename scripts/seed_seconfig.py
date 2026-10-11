@@ -10,13 +10,13 @@ requires) — exactly the shape the gateway's setting provider and the
 Lambda chain's ConfigModel read back.
 
 Primary use: seeding DynamoDB Local for fully-offline runs of the
-Banyan-hosting gateway (see deploy/docker-compose.yml, ddb-local
+Banyan-hosting gateway (see docker-compose.yml, ddb-local
 variant). Also works against a real table for fresh-environment
 bootstrap.
 
 Safety: dry-run by default — pass --apply to write. Secrets come from
 the JSON file you point it at; never commit a filled-in copy
-(deploy/env/se-configdata.example.json is a placeholder template only).
+(env/se-configdata.example.json is a placeholder template only).
 
 Usage:
     python seed_seconfig.py --file ../env/se-configdata.local.json

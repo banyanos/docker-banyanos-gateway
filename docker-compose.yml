@@ -12,8 +12,8 @@
 #   The image must contain both the gateway and the Banyan runtime —
 #   the silvaengine_gateway package + framework (silvaengine_base /
 #   silvaengine_utility / silvaengine_connections / silvaengine_dynamodb_base)
-#   + the 12 business engines, with PYTHONPATH using the layout proven in
-#   api-runtime: /app/vendor:/app:/app/modules/<12 engine repo roots>.
+#   + the 12 business engines. In the source overlay, SilvaEngine packages
+#   are pip-installed and PYTHONPATH lists /app/modules/<12 engine repo roots>.
 #   Missing any path entry makes that engine's import fail → auth layer
 #   Permission denied → blanket 403 (the same pitfall api-runtime hit;
 #   include everything).

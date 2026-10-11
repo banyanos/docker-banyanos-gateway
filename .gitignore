@@ -1,3 +1,31 @@
-# Local deploy secrets and the generated seed record (created by deploy.sh; never commit to any repo)
+# Secrets & local config — never commit
 .env
+.ssh/*
+!.ssh/.gitkeep
+
+# Editor
+.vscode/
+
+# Runtime state (keep the dirs, drop the contents)
+data/*
+!data/.gitkeep
+logs/*
+!logs/.gitkeep
+
+# Bundled DB host bind mounts (Neo4j / PostgreSQL / Redis data + logs)
+neo4j_data/
+postgres_data/
+postgres_logs/
+redis_data/
+
+# Misc
+*.bak
+__pycache__/
+*.pyc
+
+!.dockerignore
+.claude
+
 env/*.local.json
+env/*.example.json
+/.ssh/

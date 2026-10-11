@@ -1,125 +1,24 @@
-# =============================================================================
-# SilvaEngine Gateway — bind-mount overlay variant (P0 container acceptance, no image build)
-#
-# Usage (requires Docker Compose v2 — environment / healthcheck merge key by
-# key, so the base file's SETTING_SOURCE / ENDPOINT_ID / AWS credential
-# injection / depends_on etc. are all inherited):
-#
-#   cd docker-banyanos-gateway && docker compose -f docker-compose.yml \
-#       -f docker-compose.bindmount.yml up -d
-#
-# Differences from the production image variant (single docker-compose.yml),
-# gateway service only:
-#   - image is overridden with plain python:3.12-slim — no build, and the
-#     gateway image does not need to exist;
-#   - the whole runtime is injected via bind mounts (source edits take effect
-#     on container restart, matching the api-runtime server deploy model):
-#       gateway package       → /app/silvaengine_gateway
-#       banyan 12 engines     → /app/modules
-#       vendor framework snapshot → /app/vendor  (constants/definitions/dynamodb_base)
-#       three framework repos → /app/silvaengine_{base,utility,connections}
-#   - on startup it pip installs requirements-bindmount.txt, then exec uvicorn --factory.
-#
-# All mount points sit flat under /app (a container rootfs directory) without
-# nesting — nested bind mounts create mount-point directories inside the host
-# bind source and pollute the source repo (junk directories in git status).
-#
-# .env additions (§7.1): GATEWAY_IMAGE needs a placeholder value — the base
-# file's ${GATEWAY_IMAGE:?} guard is still interpolated in overlay mode (the
-# image is overridden, but the variable must still exist); for the path
-# variables see the :? guards in the volumes section — any missing one errors.
-# =============================================================================
-
+# SilvaEngine packages are pip-installed in the image; only Banyanos source is mounted.
 services:
   gateway:
-    # Start from a plain base image: code and dependencies are injected via
-    # mounts, with no build section — no compose operation triggers a build,
-    # and no gateway image is needed (the production deliverable is the P1 image).
-    image: ${DOCKER_MIRROR_PREFIX:-docker.1ms.run/library/}python:3.12-slim
+    build:
+      context: .
+      args:
+        PYTHON_IMAGE: ${DOCKER_MIRROR_PREFIX:-docker.1ms.run/library/}python:3.12-slim
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}
+      secrets:
+        - github_ssh_key
     environment:
-      # Module search path (matches the layout proven in api-runtime):
-      #   /app/vendor            → silvaengine_constants / silvaengine_definitions /
-      #                            silvaengine_dynamodb_base snapshot packages
-      #   /app                   → silvaengine_gateway package + /app/silvaengine_<framework>
-      #                            (hit directly in package-directory layout)
-      #   /app/modules/<repo>    → 12 engine repo roots (two-level modules/<repo>/<repo>/;
-      #                            Invoker.resolve_proxied_callable does a plain
-      #                            import_module, matching Lambda package-root imports)
-      # Missing any path entry → that engine's import fails → auth layer
-      # Permission denied → blanket 403 (documented api-runtime pitfall;
-      # list everything).
-      #   /app/plugins/<repo>    → internal repo roots needed by the MCP loopback
-      #                            (mcp_protocol_plugin / silvaengine_daemon /
-      #                            mcp_http_client, repo-root layout)
-      PYTHONPATH: /app/vendor:/app:/app/modules/agent_engine:/app/modules/capability_engine:/app/modules/knowledge_engine:/app/modules/llm_engine:/app/modules/memory_engine:/app/modules/merchant_engine:/app/modules/monitor_engine:/app/modules/orchestration_engine:/app/modules/perm_engine:/app/modules/prompt_engine:/app/modules/setting_engine:/app/modules/user_engine:/app/plugins/mcp_protocol_plugin:/app/plugins/silvaengine_daemon:/app/plugins/mcp_http_client
-      # pip index and noise reduction (defaults to the Aliyun mirror for China;
-      # override in .env)
-      PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}
-      PIP_DISABLE_PIP_VERSION_CHECK: "1"
-      # TTL cache for se-* config tables (applies when engines read config via
-      # the framework; 0 disables it, SILVAENGINE_CACHE_ENABLED=false is the
-      # emergency fallback to direct reads)
+      PYTHONPATH: /app/modules/agent_engine:/app/modules/capability_engine:/app/modules/knowledge_engine:/app/modules/llm_engine:/app/modules/memory_engine:/app/modules/merchant_engine:/app/modules/monitor_engine:/app/modules/orchestration_engine:/app/modules/perm_engine:/app/modules/prompt_engine:/app/modules/setting_engine:/app/modules/user_engine
       SILVAENGINE_CACHE_TTL: ${SILVAENGINE_CACHE_TTL:-300}
     volumes:
-      # Gateway package directory (silvaengine_gateway/ under the repo root) → /app/silvaengine_gateway
-      - ${GATEWAY_PACKAGE_DIR:?set GATEWAY_PACKAGE_DIR in .env}:/app/silvaengine_gateway:ro
-      # Banyan 12 business engines (two-level modules/<repo>/<repo>/ layout)
-      - ${BANYAN_MODULES_DIR:?set BANYAN_MODULES_DIR in .env}:/app/modules:ro
-      # Framework package snapshot with no standalone repo convention
-      # (form proven in api-runtime):
-      # silvaengine_constants / silvaengine_definitions / silvaengine_dynamodb_base
-      - ${VENDOR_DIR:?set VENDOR_DIR in .env}:/app/vendor:ro
-      # Framework repos (repo-root or package-directory layout both work; the
-      # command's probe script adapts automatically)
-      - ${SILVAENGINE_BASE_DIR:?set SILVAENGINE_BASE_DIR in .env}:/app/silvaengine_base:ro
-      - ${SILVAENGINE_UTILITY_DIR:?set SILVAENGINE_UTILITY_DIR in .env}:/app/silvaengine_utility:ro
-      - ${SILVAENGINE_CONNECTIONS_DIR:?set SILVAENGINE_CONNECTIONS_DIR in .env}:/app/silvaengine_connections:ro
-      # MCP loopback internal repos (repo-root mounts; /app/plugins itself is
-      # not a mount point, so the three sit flat without nesting)
-      - ${MCP_PROTOCOL_PLUGIN_DIR:?set MCP_PROTOCOL_PLUGIN_DIR in .env}:/app/plugins/mcp_protocol_plugin:ro
-      - ${SILVAENGINE_DAEMON_DIR:?set SILVAENGINE_DAEMON_DIR in .env}:/app/plugins/silvaengine_daemon:ro
-      - ${MCP_HTTP_CLIENT_DIR:?set MCP_HTTP_CLIENT_DIR in .env}:/app/plugins/mcp_http_client:ro
-      # Runtime dependency list (pip installed at startup; same source as the P1 image)
-      - ./requirements-bindmount.txt:/tmp/requirements.txt:ro
-      # pip download cache (reused across restarts to speed up later starts)
-      - gateway-pip-cache:/root/.cache/pip
-    # exec makes python (uvicorn) PID 1 so it receives SIGTERM and exits gracefully.
-    # Framework package layout auto-detection (two valid SILVAENGINE_* layouts,
-    # probed per package; logic identical to the api-runtime compose):
-    #   ① package-directory layout — the mount source is the package directory
-    #     (/app/<pkg>/__init__.py exists): resolved via the existing /app path
-    #     entry, nothing to add;
-    #   ② repo-root layout — the mount source is the repo root
-    #     (/app/<pkg>/<pkg>/__init__.py exists): append /app/<pkg> to
-    #     PYTHONPATH so `import <pkg>` hits the same-name regular package
-    #     (a regular package always beats a namespace package across path
-    #     entries), avoiding the "repo root resolved as a namespace package →
-    #     .resources etc. submodules ModuleNotFound → blanket 500" trap; the
-    #     repo root only exposes <pkg>/ plus metadata like setup.py/tests
-    #     (same pattern as the 12 engines' /app/modules/<repo> path entries).
-    #     It can't be done the other way round — hardcoding /app/<pkg> into
-    #     PYTHONPATH unconditionally would, in package-directory layout,
-    #     promote the package's internal modules to top-level names and shadow
-    #     stdlib and third-party libraries.
-    command:
-      - bash
-      - -c
-      - |
-        # Note: double dollar signs are compose interpolation escapes; bash in the container receives single-dollar variables
-        for p in silvaengine_base silvaengine_utility silvaengine_connections; do
-          if [ -f "/app/$$p/$$p/__init__.py" ]; then
-            export PYTHONPATH="$$PYTHONPATH:/app/$$p"
-            echo "[entrypoint] $$p: repo-root layout detected, PYTHONPATH += /app/$$p"
-          fi
-        done
-        pip install -r /tmp/requirements.txt && exec uvicorn silvaengine_gateway.app:create_app_from_env --factory --host 0.0.0.0 --port 8000
-    # The first start's full pip install takes minutes — only override the
-    # start grace period; test / interval / timeout / retries inherit from base.
-    healthcheck:
-      start_period: 300s
+      - type: bind
+        source: ${BANYAN_MODULES_DIR:?set BANYAN_MODULES_DIR in .env}
+        target: /app/modules
+        read_only: true
+        bind:
+          create_host_path: false
 
-# pip download cache volume (merged alongside the base file's top-level
-# volumes; explicit name so it doesn't drift with the project name)
-volumes:
-  gateway-pip-cache:
-    name: silvaengine-gateway_pip-cache
+secrets:
+  github_ssh_key:
+    file: ${SSH_PRIVATE_KEY_FILE:-./.ssh/id_ed25519}

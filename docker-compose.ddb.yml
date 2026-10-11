@@ -9,8 +9,7 @@
 #   ddb-local — DynamoDB Local (-inMemory -sharedDb). Host port 8001 binds only
 #               to 127.0.0.1 (for local debugging/manual table loads; not
 #               publicly visible).
-#   ddb-init  — one-shot init service (python:3.12-slim, same image as the
-#               gateway overlay, zero extra pulls): wait for the endpoint →
+#   ddb-init  — one-shot init service (plain python:3.12-slim): wait for the endpoint →
 #               idempotently create the table → load the seed (overwrite) →
 #               verify row count. Driven by deploy.sh via
 #               `docker compose run --rm ddb-init`; deploy.sh's up lists its

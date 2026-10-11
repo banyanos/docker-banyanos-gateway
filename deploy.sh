@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # =============================================================================
-# SilvaEngine Gateway — Banyan one-shot deploy script (mode A: fully offline with DynamoDB Local)
+# SilvaEngine Gateway — Banyan one-shot deploy script (mode A: DynamoDB Local)
 #
 # The target server only needs Docker preinstalled (with the Compose v2 plugin); no Python / jq / awscli.
 # This script wraps the manual path in README.md (§2/§4/§7) into an idempotent one-shot flow:
 #
 #   Stage 1  environment check     docker / daemon reachable / compose v2
 #   Stage 2  config & source check .env and seed JSON generate/reuse (four-state machine) +
-#                                  gateway package / 12 engines / vendor / 3 frameworks /
-#                                  3 MCP repos source-tree check
+#                                  12 Banyanos engine source directories
 #   Stage 3  port pre-check        8000/8001/5432/6379/7474/7687 (identifies the occupier)
 #   Stage 4  start ddb-local       DynamoDB Local (-inMemory -sharedDb)
 #   Stage 5  ddb-init              create table → load seed (overwrite, idempotent) → verify row count
@@ -26,9 +25,7 @@
 #   bash deploy.sh --self-test    # built-in pure-logic self-test (no docker)
 #
 # Environment variable overrides available before .env is first generated:
-#   TENANT_PART_ID (default nestaging), GATEWAY_PACKAGE_DIR, BANYAN_MODULES_DIR,
-#   SILVAENGINE_BASE_DIR, SILVAENGINE_UTILITY_DIR, SILVAENGINE_CONNECTIONS_DIR,
-#   VENDOR_DIR, MCP_PROTOCOL_PLUGIN_DIR, SILVAENGINE_DAEMON_DIR, MCP_HTTP_CLIENT_DIR;
+#   TENANT_PART_ID (default nestaging), BANYAN_MODULES_DIR, SSH_PRIVATE_KEY_FILE;
 #   GATEWAY_WAIT_TIMEOUT (health wait limit in seconds, default 600) can be set any time.
 #
 # Mode boundary: this script only does mode A (fully offline DDB Local); mode B,
@@ -46,14 +43,8 @@ export LC_ALL=C
 
 DEPLOY_DIR=$(cd "$(dirname "$0")" && pwd)
 cd "$DEPLOY_DIR"
-# Source discovery roots (see generate_env). Two supported layouts:
-#   local  — this project sits in banyanos/ next to the 12 engine repos, with
-#            the framework/gateway/MCP repos under ../../silvaengine/;
-#   server — this project sits in a workspace next to silvaengine_gateway,
-#            the framework/MCP repos and banyan/modules.
+# Banyanos engines live beside this project locally, or under banyan/modules on the server.
 PARENT_DIR=$(cd "$DEPLOY_DIR/.." && pwd)
-GRANDPARENT_DIR=$(cd "$PARENT_DIR/.." && pwd)
-SILVAENGINE_DIR="$GRANDPARENT_DIR/silvaengine"
 
 ENV_FILE="$DEPLOY_DIR/.env"
 SEED_DIR="$DEPLOY_DIR/env"
@@ -66,17 +57,13 @@ HOST_PORTS=(8000 8001 5432 6379 7474 7687)
 ENGINE_REPOS=(agent_engine capability_engine knowledge_engine llm_engine \
   memory_engine merchant_engine monitor_engine orchestration_engine \
   perm_engine prompt_engine setting_engine user_engine)
-VENDOR_PKGS=(silvaengine_constants silvaengine_definitions silvaengine_dynamodb_base)
-FRAMEWORK_PKGS=(silvaengine_base silvaengine_utility silvaengine_connections)
 REQUIRED_LOGS=("se-configdata setting loaded: setting_id=" \
   "Pool bootstrap: framework pools created")
-OPTIONAL_LOGS=("repo-root layout detected" "Rewrote [0-9]+ httpx pool base_url")
+OPTIONAL_LOGS=("Rewrote [0-9]+ httpx pool base_url")
 
 REQUIRED_ENV_KEYS=(GATEWAY_IMAGE TENANT_PART_ID POSTGRES_USER POSTGRES_PASSWORD \
   POSTGRES_DB NEO4J_AUTH REDIS_PASSWORD SE_CONFIGDATA_ENDPOINT_URL \
-  GATEWAY_PACKAGE_DIR BANYAN_MODULES_DIR SILVAENGINE_BASE_DIR \
-  SILVAENGINE_UTILITY_DIR SILVAENGINE_CONNECTIONS_DIR VENDOR_DIR \
-  MCP_PROTOCOL_PLUGIN_DIR SILVAENGINE_DAEMON_DIR MCP_HTTP_CLIENT_DIR)
+  BANYAN_MODULES_DIR)
 
 WAIT_TIMEOUT="${GATEWAY_WAIT_TIMEOUT:-600}"
 FORCE_ENV=0
@@ -122,7 +109,7 @@ trap on_error ERR
 
 usage() {
   cat <<'USAGE'
-SilvaEngine Gateway — Banyan 一键部署（模式 A：DynamoDB Local 全离线）
+SilvaEngine Gateway — Banyan 一键部署（模式 A：DynamoDB Local）
 
 用法: bash deploy.sh [命令] [选项]
 
@@ -140,16 +127,9 @@ SilvaEngine Gateway — Banyan 一键部署（模式 A：DynamoDB Local 全离�
 
 环境变量（首次生成 .env 前生效，路径类覆盖探测结果）:
   TENANT_PART_ID            租户 part_id（默认 nestaging）
-  GATEWAY_PACKAGE_DIR       网关包目录（仓根下的 silvaengine_gateway/）
   BANYAN_MODULES_DIR        Banyan 12 引擎目录（banyan/modules）
-  SILVAENGINE_BASE_DIR      框架仓 silvaengine_base
-  SILVAENGINE_UTILITY_DIR   框架仓 silvaengine_utility
-  SILVAENGINE_CONNECTIONS_DIR 框架仓 silvaengine_connections
-  VENDOR_DIR                vendor 快照目录（constants/definitions/dynamodb_base）
-  MCP_PROTOCOL_PLUGIN_DIR   MCP 回环内部仓 mcp_protocol_plugin
-  SILVAENGINE_DAEMON_DIR    MCP 回环内部仓 silvaengine_daemon
-  MCP_HTTP_CLIENT_DIR       MCP 回环内部仓 mcp_http_client
-  GATEWAY_WAIT_TIMEOUT      健康等待上限秒数（默认 600，首次启动 pip 安装较慢）
+  SSH_PRIVATE_KEY_FILE     GitHub SSH private key (default ./.ssh/id_ed25519; build only)
+  GATEWAY_WAIT_TIMEOUT      健康等待上限秒数（默认 600）
 USAGE
 }
 
@@ -224,15 +204,7 @@ load_env_values() {
   NEO4J_AUTH=$(env_get NEO4J_AUTH)
   NEO4J_PASSWORD="${NEO4J_AUTH#neo4j/}"
   REDIS_PASSWORD=$(env_get REDIS_PASSWORD)
-  GATEWAY_PACKAGE_DIR=$(env_get GATEWAY_PACKAGE_DIR)
   BANYAN_MODULES_DIR=$(env_get BANYAN_MODULES_DIR)
-  SILVAENGINE_BASE_DIR=$(env_get SILVAENGINE_BASE_DIR)
-  SILVAENGINE_UTILITY_DIR=$(env_get SILVAENGINE_UTILITY_DIR)
-  SILVAENGINE_CONNECTIONS_DIR=$(env_get SILVAENGINE_CONNECTIONS_DIR)
-  VENDOR_DIR=$(env_get VENDOR_DIR)
-  MCP_PROTOCOL_PLUGIN_DIR=$(env_get MCP_PROTOCOL_PLUGIN_DIR)
-  SILVAENGINE_DAEMON_DIR=$(env_get SILVAENGINE_DAEMON_DIR)
-  MCP_HTTP_CLIENT_DIR=$(env_get MCP_HTTP_CLIENT_DIR)
 }
 
 # Config values must be purely alphanumeric: this script renders the seed JSON with sed, and a wider
@@ -255,60 +227,12 @@ generate_env() {
 
   # Path discovery: environment variable overrides win, otherwise probe the
   # local layout first, then the server workspace layout (see PARENT_DIR above).
-  if [ -z "${GATEWAY_PACKAGE_DIR:-}" ]; then
-    if ! GATEWAY_PACKAGE_DIR=$(first_existing \
-        "$SILVAENGINE_DIR/silvaengine_gateway/silvaengine_gateway" \
-        "$PARENT_DIR/silvaengine_gateway/silvaengine_gateway"); then
-      GATEWAY_PACKAGE_DIR=""
-    fi
-  fi
   if [ -z "${BANYAN_MODULES_DIR:-}" ]; then
     # local: banyanos/ itself holds the engine repos (banyanos/<repo>/<repo>/)
     if [ -d "$PARENT_DIR/agent_engine" ]; then
       BANYAN_MODULES_DIR="$PARENT_DIR"
     elif ! BANYAN_MODULES_DIR=$(first_existing "$PARENT_DIR/banyan/modules"); then
       BANYAN_MODULES_DIR=""
-    fi
-  fi
-  if [ -z "${SILVAENGINE_BASE_DIR:-}" ]; then
-    if ! SILVAENGINE_BASE_DIR=$(first_existing \
-        "$SILVAENGINE_DIR/silvaengine_base" "$PARENT_DIR/silvaengine_base"); then
-      SILVAENGINE_BASE_DIR=""
-    fi
-  fi
-  if [ -z "${SILVAENGINE_UTILITY_DIR:-}" ]; then
-    if ! SILVAENGINE_UTILITY_DIR=$(first_existing \
-        "$SILVAENGINE_DIR/silvaengine_utility" "$PARENT_DIR/silvaengine_utility"); then
-      SILVAENGINE_UTILITY_DIR=""
-    fi
-  fi
-  if [ -z "${SILVAENGINE_CONNECTIONS_DIR:-}" ]; then
-    if ! SILVAENGINE_CONNECTIONS_DIR=$(first_existing \
-        "$SILVAENGINE_DIR/silvaengine_connections" "$PARENT_DIR/silvaengine_connections"); then
-      SILVAENGINE_CONNECTIONS_DIR=""
-    fi
-  fi
-  if [ -z "${VENDOR_DIR:-}" ]; then
-    if ! VENDOR_DIR=$(first_existing "$GRANDPARENT_DIR/docker/api-runtime/vendor"); then
-      VENDOR_DIR=""
-    fi
-  fi
-  if [ -z "${MCP_PROTOCOL_PLUGIN_DIR:-}" ]; then
-    if ! MCP_PROTOCOL_PLUGIN_DIR=$(first_existing \
-        "$SILVAENGINE_DIR/mcp_protocol_plugin" "$PARENT_DIR/mcp_protocol_plugin"); then
-      MCP_PROTOCOL_PLUGIN_DIR=""
-    fi
-  fi
-  if [ -z "${SILVAENGINE_DAEMON_DIR:-}" ]; then
-    if ! SILVAENGINE_DAEMON_DIR=$(first_existing \
-        "$SILVAENGINE_DIR/silvaengine_daemon" "$PARENT_DIR/silvaengine_daemon"); then
-      SILVAENGINE_DAEMON_DIR=""
-    fi
-  fi
-  if [ -z "${MCP_HTTP_CLIENT_DIR:-}" ]; then
-    if ! MCP_HTTP_CLIENT_DIR=$(first_existing \
-        "$SILVAENGINE_DIR/mcp_http_client" "$PARENT_DIR/mcp_http_client"); then
-      MCP_HTTP_CLIENT_DIR=""
     fi
   fi
 
@@ -322,8 +246,8 @@ generate_env() {
 # docker-banyanos-gateway .env — generated by deploy.sh, do not commit (contains passwords).
 # After editing, rerun bash deploy.sh to apply; keys are described in README.md §2/§7.1.
 
-# --- Gateway (bind-mount mode placeholder; the base file's \${GATEWAY_IMAGE:?} guard requires a non-empty value) ---
-GATEWAY_IMAGE=bindmount-placeholder
+# --- Locally built gateway image ---
+GATEWAY_IMAGE=banyanos-gateway:local
 
 # --- Tenant ---
 TENANT_PART_ID=${part_id}
@@ -342,17 +266,10 @@ region_name=us-west-2
 aws_access_key_id=local
 aws_secret_access_key=local
 
-# --- bind-mount source paths (auto-discovered, can be corrected by hand) ---
-GATEWAY_PACKAGE_DIR=${GATEWAY_PACKAGE_DIR}
+# --- Only Banyanos source is mounted ---
 BANYAN_MODULES_DIR=${BANYAN_MODULES_DIR}
-SILVAENGINE_BASE_DIR=${SILVAENGINE_BASE_DIR}
-SILVAENGINE_UTILITY_DIR=${SILVAENGINE_UTILITY_DIR}
-SILVAENGINE_CONNECTIONS_DIR=${SILVAENGINE_CONNECTIONS_DIR}
-VENDOR_DIR=${VENDOR_DIR}
-# MCP loopback internal repos (capability_engine → mcp_protocol_plugin)
-MCP_PROTOCOL_PLUGIN_DIR=${MCP_PROTOCOL_PLUGIN_DIR}
-SILVAENGINE_DAEMON_DIR=${SILVAENGINE_DAEMON_DIR}
-MCP_HTTP_CLIENT_DIR=${MCP_HTTP_CLIENT_DIR}
+# Private GitHub access for image build; key never enters the image.
+SSH_PRIVATE_KEY_FILE=${SSH_PRIVATE_KEY_FILE:-./.ssh/id_ed25519}
 
 # --- Optional overrides (uncomment to enable) ---
 # PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
@@ -423,50 +340,24 @@ validate_env_keys() {
   fi
 }
 
-fw_layout_ok() {
-  if [ -f "$1/__init__.py" ]; then return 0; fi
-  if [ -f "$1/$2/__init__.py" ]; then return 0; fi
-  return 1
-}
-
 # Source-tree check (collect all problems, then report once so they can be fixed in one go)
 validate_source_paths() {
   local problems=() f d
 
-  for f in __init__.py app.py auth/middleware.py; do
-    if [ ! -f "$GATEWAY_PACKAGE_DIR/$f" ]; then
-      problems+=("网关包缺文件：${GATEWAY_PACKAGE_DIR}/$f（.env: GATEWAY_PACKAGE_DIR）")
-    fi
-  done
   for d in "${ENGINE_REPOS[@]}"; do
     if [ ! -d "$BANYAN_MODULES_DIR/$d" ]; then
       problems+=("Banyan 引擎目录缺失：${BANYAN_MODULES_DIR}/$d（.env: BANYAN_MODULES_DIR）")
     fi
   done
-  for d in "${VENDOR_PKGS[@]}"; do
-    if [ ! -f "$VENDOR_DIR/$d/__init__.py" ]; then
-      problems+=("vendor 包缺失：${VENDOR_DIR}/$d（.env: VENDOR_DIR）")
-    fi
+  local key_file
+  key_file=$(env_get SSH_PRIVATE_KEY_FILE)
+  key_file="${key_file:-./.ssh/id_ed25519}"
+  if [ ! -s "$key_file" ]; then
+    problems+=("Place a GitHub SSH private key at $key_file (or set SSH_PRIVATE_KEY_FILE in .env)")
+  fi
+  for f in Dockerfile requirements-silvaengine.txt; do
+    if [ ! -f "$DEPLOY_DIR/$f" ]; then problems+=("Missing $f"); fi
   done
-  if ! fw_layout_ok "$SILVAENGINE_BASE_DIR" silvaengine_base; then
-    problems+=("框架仓布局无法识别：$SILVAENGINE_BASE_DIR（.env: SILVAENGINE_BASE_DIR）")
-  fi
-  if ! fw_layout_ok "$SILVAENGINE_UTILITY_DIR" silvaengine_utility; then
-    problems+=("框架仓布局无法识别：$SILVAENGINE_UTILITY_DIR（.env: SILVAENGINE_UTILITY_DIR）")
-  fi
-  if ! fw_layout_ok "$SILVAENGINE_CONNECTIONS_DIR" silvaengine_connections; then
-    problems+=("框架仓布局无法识别：$SILVAENGINE_CONNECTIONS_DIR（.env: SILVAENGINE_CONNECTIONS_DIR）")
-  fi
-  # MCP loopback internal repos are mounted at their repo root (/app/plugins/<repo> on PYTHONPATH), so they must use repo-root layout
-  if [ ! -f "$MCP_PROTOCOL_PLUGIN_DIR/mcp_protocol_plugin/__init__.py" ]; then
-    problems+=("MCP 仓非仓根布局：$MCP_PROTOCOL_PLUGIN_DIR（.env: MCP_PROTOCOL_PLUGIN_DIR）")
-  fi
-  if [ ! -f "$SILVAENGINE_DAEMON_DIR/silvaengine_daemon/__init__.py" ]; then
-    problems+=("MCP 仓非仓根布局：$SILVAENGINE_DAEMON_DIR（.env: SILVAENGINE_DAEMON_DIR）")
-  fi
-  if [ ! -f "$MCP_HTTP_CLIENT_DIR/mcp_http_client/__init__.py" ]; then
-    problems+=("MCP 仓非仓根布局：$MCP_HTTP_CLIENT_DIR（.env: MCP_HTTP_CLIENT_DIR）")
-  fi
   if [ ! -f "$DEPLOY_DIR/requirements-bindmount.txt" ]; then
     problems+=("缺少 requirements-bindmount.txt")
   fi
@@ -486,7 +377,7 @@ validate_source_paths() {
   if grep -q '^[[:space:]]*ddb-local:' "$DEPLOY_DIR/docker-compose.yml"; then
     printf '[deploy.sh] 警告：docker-compose.yml 中 ddb-local 已取消注释，可能与 docker-compose.ddb.yml 的端口映射冲突；建议保持注释（Overlay 已提供该服务）\n' >&2
   fi
-  log "源码树校验通过：网关包 + 12 引擎 + vendor 3 包 + 3 框架 + 3 MCP 仓"
+  log "源码树校验通过：12 Banyanos engines + pip requirements + build SSH key"
 }
 
 # Four-state machine: reuse / generate / re-render from .env only / orphan error
@@ -574,7 +465,7 @@ check_ports() {
 wait_healthy() {
   local deadline now all_ok st c line
   deadline=$(( $(date +%s) + WAIT_TIMEOUT ))
-  log "等待容器健康（最长 ${WAIT_TIMEOUT}s；首次启动容器内 pip 安装约 1-3 分钟）"
+  log "等待容器健康（最长 ${WAIT_TIMEOUT}s；pip dependencies are installed during image build）"
   while :; do
     now=$(date +%s)
     if [ "$now" -ge "$deadline" ]; then
@@ -639,7 +530,7 @@ check_log() {
   fi
   for pat in "${OPTIONAL_LOGS[@]}"; do
     if ! grep -qE "$pat" <<< "$logs"; then
-      printf '[deploy.sh] 提示：可选日志缺失（%s）——repo-root 布局未检出或池回环改写未发生，非预期时请检查挂载路径与 BANYAN_LOOPBACK_BASE_URL\n' "$pat" >&2
+      printf '[deploy.sh] 提示：可选日志缺失（%s）——池回环改写未发生，非预期时请检查挂载路径与 BANYAN_LOOPBACK_BASE_URL\n' "$pat" >&2
     fi
   done
 }
@@ -716,6 +607,7 @@ cmd_up() {
 
   set_stage 6 "启动网关与数据面（五服务）" \
     "镜像拉取失败检查网络/DOCKER_MIRROR_PREFIX；bind-mount 源路径以 .env 为准；pip 慢可设 PIP_INDEX_URL"
+  dc build gateway
   dc up -d "${UP_SERVICES[@]}"
   if [ "$RESTART" = "1" ]; then
     log "--restart：重启 gateway"
@@ -723,7 +615,7 @@ cmd_up() {
   fi
 
   set_stage 7 "健康检查与启动验证" \
-    "看报错：docker logs silvaengine-gateway；首次启动 pip 安装较慢，可用 GATEWAY_WAIT_TIMEOUT=900 bash deploy.sh 延长等待"
+    "看报错：docker logs silvaengine-gateway；可用 GATEWAY_WAIT_TIMEOUT=900 bash deploy.sh 延长等待"
   wait_healthy
   verify_gateway
   check_log required
@@ -823,7 +715,7 @@ cmd_self_test() {
   generate_env
   local pw_check
   pw_check=$(env_get POSTGRES_PASSWORD)
-  expect_eq "GATEWAY_IMAGE 占位值" "$(env_get GATEWAY_IMAGE)" "bindmount-placeholder"
+  expect_eq "GATEWAY_IMAGE local build" "$(env_get GATEWAY_IMAGE)" "banyanos-gateway:local"
   expect_eq "SE_CONFIGDATA_ENDPOINT_URL 指向 ddb-local" \
     "$(env_get SE_CONFIGDATA_ENDPOINT_URL)" "http://ddb-local:8000"
   expect_eq "POSTGRES_PASSWORD 16 位" "${#pw_check}" "16"
@@ -832,15 +724,15 @@ cmd_self_test() {
   expect_eq "NEO4J_AUTH 形态 neo4j/<16>" \
     "$(env_get NEO4J_AUTH | grep -c '^neo4j/[A-Za-z0-9]\{16\}$' || true)" "1"
   expect_eq "AWS 假凭据已写入" "$(env_get aws_access_key_id)" "local"
-  local mcp_key
-  for mcp_key in MCP_PROTOCOL_PLUGIN_DIR SILVAENGINE_DAEMON_DIR MCP_HTTP_CLIENT_DIR; do
-    expect_eq "$mcp_key 键已写入 .env" "$(grep -c "^${mcp_key}=" "$ENV_FILE" || true)" "1"
-  done
+    expect_eq "SSH key path configured" "$(env_get SSH_PRIVATE_KEY_FILE)" "${SSH_PRIVATE_KEY_FILE:-./.ssh/id_ed25519}"
   if [ -z "${TENANT_PART_ID:-}" ]; then
     expect_eq "TENANT_PART_ID 默认 nestaging" "$(env_get TENANT_PART_ID)" "nestaging"
   fi
-  expect_eq ".env 权限 600" \
-    "$(stat -f '%Lp' "$ENV_FILE" 2>/dev/null || stat -c '%a' "$ENV_FILE" 2>/dev/null || true)" "600"
+  local env_mode
+  if ! env_mode=$(stat -c '%a' "$ENV_FILE" 2>/dev/null); then
+    env_mode=$(stat -f '%Lp' "$ENV_FILE" 2>/dev/null || true)
+  fi
+  expect_eq ".env 权限 600" "$env_mode" "600"
 
   # load_env_values read-back
   load_env_values
@@ -918,7 +810,7 @@ if [ "$MODE" != "down" ] && [ "$VOLUMES" = "1" ]; then
   exit 1
 fi
 
-log "SilvaEngine Gateway 一键部署（模式 A：DynamoDB Local 全离线）"
+log "SilvaEngine Gateway 一键部署（模式 A：DynamoDB Local）"
 
 case "$MODE" in
   selftest)

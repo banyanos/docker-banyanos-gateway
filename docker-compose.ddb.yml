@@ -27,7 +27,7 @@
 services:
   ddb-local:
     image: amazon/dynamodb-local:latest
-    container_name: silvaengine-gateway-ddb-local
+    container_name: banyanos-ddb-local
     ports:
       - "127.0.0.1:8001:8000"
     command: ["-jar", "DynamoDBLocal.jar", "-inMemory", "-sharedDb"]

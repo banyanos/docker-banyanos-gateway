@@ -454,7 +454,7 @@ check_ports() {
     if port_busy "$p"; then
       holder=$(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null \
         | grep ":$p->" | head -1 | cut -d' ' -f1 || true)
-      if printf '%s' "$holder" | grep -q '^silvaengine-gateway'; then
+      if printf '%s' "$holder" | grep -q '^banyanos-gateway'; then
         log "端口 $p 被本部署容器（$holder）占用——重复运行场景，继续"
       elif [ -n "$holder" ]; then
         die "端口 $p 被其他容器（$holder）占用——请停止该容器或调整端口映射"
@@ -478,20 +478,20 @@ wait_healthy() {
     now=$(date +%s)
     if [ "$now" -ge "$deadline" ]; then
       printf '%s\n' '── gateway 最近日志（docker logs --tail 60）──' >&2
-      docker logs --tail 60 silvaengine-gateway 2>&1 || true
+      docker logs --tail 60 banyanos-gateway 2>&1 || true
       die "健康检查超时（${WAIT_TIMEOUT}s）。可用 GATEWAY_WAIT_TIMEOUT 环境变量延长等待"
     fi
     all_ok=1
     line=""
-    for c in silvaengine-gateway-postgres silvaengine-gateway-neo4j \
-      silvaengine-gateway-redis silvaengine-gateway; do
+    for c in banyanos-postgres banyanos-neo4j \
+      banyanos-redis banyanos-gateway; do
       st=$(docker inspect -f '{{.State.Health.Status}}' "$c" 2>/dev/null || true)
-      line="$line ${c#silvaengine-gateway-}=${st:-none}"
+      line="$line ${c#banyanos-gateway-}=${st:-none}"
       if [ "$st" != "healthy" ]; then
         all_ok=0
       fi
     done
-    st=$(docker inspect -f '{{.State.Running}}' silvaengine-gateway-ddb-local 2>/dev/null || true)
+    st=$(docker inspect -f '{{.State.Running}}' banyanos-ddb-local 2>/dev/null || true)
     line="$line ddb-local=${st:-none}"
     if [ "$st" != "true" ]; then
       all_ok=0
@@ -520,7 +520,7 @@ verify_gateway() {
 # "container currently healthy" is already ensured by wait_healthy first, so a full scan won't pass a crash loop.
 check_log() {
   local logs miss=() pat
-  logs=$(docker logs silvaengine-gateway 2>&1 || true)
+  logs=$(docker logs banyanos-gateway 2>&1 || true)
   # herestring instead of a pipe: under pipefail, grep -q exiting on first match makes the upstream printf take SIGPIPE
   # (141 → if! evaluates true → false 'missing' report); always triggers once startup logs exceed the 64KB pipe buffer (hit in practice)
   for pat in "${REQUIRED_LOGS[@]}"; do
@@ -533,7 +533,7 @@ check_log() {
       printf '[deploy.sh] 缺失关键日志：%s\n' "$pat" >&2
     done
     if [ "$1" = "required" ]; then
-      die "网关启动关键日志缺失——se-configdata 叠加或池引导未生效；完整日志：docker logs silvaengine-gateway"
+      die "网关启动关键日志缺失——se-configdata 叠加或池引导未生效；完整日志：docker logs banyanos-gateway"
     fi
   fi
   for pat in "${OPTIONAL_LOGS[@]}"; do
@@ -630,7 +630,7 @@ cmd_up() {
   fi
 
   set_stage 7 "健康检查与启动验证" \
-    "看报错：docker logs silvaengine-gateway；可用 GATEWAY_WAIT_TIMEOUT=900 bash deploy.sh 延长等待"
+    "看报错：docker logs banyanos-gateway；可用 GATEWAY_WAIT_TIMEOUT=900 bash deploy.sh 延长等待"
   wait_healthy
   verify_gateway
   check_log required
@@ -646,16 +646,16 @@ cmd_status() {
   set_stage S "状态检查" "docker compose ... ps -a 查看全部容器"
   dc ps
   local bad=0 c st
-  for c in silvaengine-gateway-postgres silvaengine-gateway-neo4j \
-    silvaengine-gateway-redis silvaengine-gateway; do
+  for c in banyanos-postgres banyanos-neo4j \
+    banyanos-redis banyanos-gateway; do
     st=$(docker inspect -f '{{.State.Health.Status}}' "$c" 2>/dev/null || true)
     printf '  %-34s %s\n' "$c" "${st:-未运行}"
     if [ "$st" != "healthy" ]; then
       bad=1
     fi
   done
-  st=$(docker inspect -f '{{.State.Running}}' silvaengine-gateway-ddb-local 2>/dev/null || true)
-  printf '  %-34s %s\n' "silvaengine-gateway-ddb-local" "${st:-未运行}"
+  st=$(docker inspect -f '{{.State.Running}}' banyanos-ddb-local 2>/dev/null || true)
+  printf '  %-34s %s\n' "banyanos-ddb-local" "${st:-未运行}"
   if [ "$st" != "true" ]; then
     bad=1
   fi

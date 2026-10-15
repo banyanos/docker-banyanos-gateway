@@ -13,3 +13,8 @@ git+ssh://git@github.com/ideabosque/mcp_http_client.git@9e46d9aabc5140db34ed6e27
 git+ssh://git@github.com/ideabosque/silvaengine_daemon.git@a0f6267e33fd56f8ded41eac8aad22241a096bd8#egg=silvaengine_daemon  # main
 git+ssh://git@github.com/ideabosque/mcp_protocol_plugin.git@57e932de64931df331bfa022db1ad9d507bbfed3#egg=mcp_protocol_plugin  # main
 git+ssh://git@github.com/ideabosque/silvaengine_gateway.git@0bc851f22293d2af9cc4746716bf01764481e5e6#egg=silvaengine_gateway  # main
+# LLM provider plugins (plan §1.2 / D9): the six banyanos/llm_provider_*
+# projects are BanyanOS modules, supplied like the engines through
+# BANYAN_MODULES_DIR + PYTHONPATH (docker-compose.bindmount.yml) and found by
+# llm_engine's llm_provider_* package scan. Their SDKs are pinned in
+# requirements-bindmount.txt.

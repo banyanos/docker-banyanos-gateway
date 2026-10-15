@@ -13,7 +13,8 @@
 #   the silvaengine_gateway package + framework (silvaengine_base /
 #   silvaengine_utility / silvaengine_connections / silvaengine_dynamodb_base)
 #   + the 12 business engines. In the source overlay, SilvaEngine packages
-#   are pip-installed and PYTHONPATH lists /app/modules/<12 engine repo roots>.
+#   are pip-installed and PYTHONPATH lists /app/modules/<12 engine repo roots>
+#   plus the 6 llm_provider_* plugin roots (LLM provider plan D9).
 #   Missing any path entry makes that engine's import fail → auth layer
 #   Permission denied → blanket 403 (the same pitfall api-runtime hit;
 #   include everything).

@@ -93,6 +93,46 @@ python scripts/seed_seconfig.py --file env/se-configdata.local.json \
 
 默认 dry-run，`--apply` 才写。含真实密钥的文件严禁提交任何仓库。
 
+Agent 逐字流式（LLM Provider Plugin P3）需要变量 `llm_stream_redis`
+（llm_engine 写 `llm:stream:{id}`、agent_engine 读；`host` / `port` / `db` /
+`username` / `password` / `maxlen` / `ttl_seconds`，可与 `email_code_redis`
+指向同一 Redis）。缺省时对话退化为调用级事件（started → completed），
+回答内容不变。
+
+### 4.1 se-configdata 存于 PostgreSQL（无 DynamoDB）
+
+网关也可从部署自身的 PostgreSQL 读取同一记录（`setting_id, variable,
+value JSONB` 每变量一行，表 `se_configdata`）：
+
+```dotenv
+SETTING_SOURCE=se-configdata
+SE_CONFIGDATA_BACKEND=postgresql
+SE_CONFIGDATA_DATABASE_URL=postgresql+psycopg://USER:PASS@HOST:5432/DB   # 缺省回落 PG_HOST/PG_USER/PG_DB…
+# SE_CONFIGDATA_PG_TABLE=se_configdata
+```
+
+灌表（幂等 upsert，自动建表）：
+
+```bash
+SE_CONFIGDATA_DATABASE_URL=... python scripts/seed_seconfig_pg.py     --file env/se-configdata.local.json [--setting-id beta_core_banyan]
+```
+
+### 4.2 首个平台管理员与权限资源（新库必做）
+
+新库没有管理员，API 也不允许非超管分配预置角色 `platform:super_admin`；
+菜单/页面/按钮权限资源只由 `registerResources` 注册——未执行时前端各页显示
+「無存取權限」。网关首次启动（perm_engine 建好预置角色）后执行一次：
+
+1. 经前端或 `registerUser` 注册管理员账号；
+2. 执行（幂等）：
+
+```bash
+BANYAN_ADMIN_PASSWORD=... SE_CONFIGDATA_DATABASE_URL=... python scripts/bootstrap_platform_admin.py --email admin@example.com     --gateway-url http://127.0.0.1:8000/beta/core/banyan --part-id <tenant>
+```
+
+脚本激活该用户、直写分配 `platform:super_admin`、以其身份登录并调用
+`registerResources`。密码仅经环境变量传入，不打印。
+
 ## 5. P0 验收步骤（使用者执行）
 
 1. `docker compose ps` 全部 healthy；`curl /health` 200。

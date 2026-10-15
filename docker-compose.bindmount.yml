@@ -9,7 +9,7 @@ services:
       secrets:
         - github_ssh_key
     environment:
-      PYTHONPATH: /app/modules/agent_engine:/app/modules/capability_engine:/app/modules/knowledge_engine:/app/modules/llm_engine:/app/modules/memory_engine:/app/modules/merchant_engine:/app/modules/monitor_engine:/app/modules/orchestration_engine:/app/modules/perm_engine:/app/modules/prompt_engine:/app/modules/setting_engine:/app/modules/user_engine
+      PYTHONPATH: /app/modules/agent_engine:/app/modules/capability_engine:/app/modules/knowledge_engine:/app/modules/llm_engine:/app/modules/memory_engine:/app/modules/merchant_engine:/app/modules/monitor_engine:/app/modules/orchestration_engine:/app/modules/perm_engine:/app/modules/prompt_engine:/app/modules/setting_engine:/app/modules/user_engine:/app/modules/llm_provider_base:/app/modules/llm_provider_anthropic:/app/modules/llm_provider_openai:/app/modules/llm_provider_openai_chat:/app/modules/llm_provider_gemini:/app/modules/llm_provider_ollama
       SILVAENGINE_CACHE_TTL: ${SILVAENGINE_CACHE_TTL:-300}
     volumes:
       - type: bind

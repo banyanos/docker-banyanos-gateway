@@ -29,7 +29,7 @@ services:
     image: amazon/dynamodb-local:latest
     container_name: banyanos-ddb-local
     ports:
-      - "127.0.0.1:8001:8000"
+      - "127.0.0.1:${DYNAMODB_HOST_PORT:-8001}:8000"
     command: ["-jar", "DynamoDBLocal.jar", "-inMemory", "-sharedDb"]
     restart: unless-stopped
     logging:

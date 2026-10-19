@@ -202,6 +202,14 @@ seed configuration when migrating.
 
 ### 7.2 Build and start
 
+Published host ports are configurable in `.env`: `GATEWAY_HOST_PORT` (8000),
+`POSTGRES_HOST_PORT` (5432), `REDIS_HOST_PORT` (6379),
+`NEO4J_HTTP_HOST_PORT` (7474), `NEO4J_BOLT_HOST_PORT` (7687), and
+`DYNAMODB_HOST_PORT` (8001). Recreate the affected services with Compose
+after changing them. Container ports and internal service URLs stay unchanged;
+host clients must use the configured host ports. DynamoDB remains bound to
+127.0.0.1. `deploy.sh` uses these values for its port checks and printed URLs.
+
 `docker compose up -d` automatically loads `docker-compose.override.yml`,
 which reuses the source overlay's build settings and Banyanos source mount.
 The source overlay sets `pull_policy: build` so Compose builds the gateway

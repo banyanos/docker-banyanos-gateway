@@ -213,6 +213,28 @@ load_env_values() {
   NEO4J_PASSWORD="${NEO4J_AUTH#neo4j/}"
   REDIS_PASSWORD=$(env_get REDIS_PASSWORD)
   BANYAN_MODULES_DIR=$(env_get BANYAN_MODULES_DIR)
+  load_host_ports
+}
+
+# Match Compose precedence: shell environment, .env, then the documented default.
+load_host_ports() {
+  local spec key value
+  HOST_PORTS=()
+  for spec in GATEWAY_HOST_PORT:8000 POSTGRES_HOST_PORT:5432 REDIS_HOST_PORT:6379 \
+    NEO4J_HTTP_HOST_PORT:7474 NEO4J_BOLT_HOST_PORT:7687 DYNAMODB_HOST_PORT:8001; do
+    key="${spec%%:*}"
+    value="${!key:-}"
+    [ -n "$value" ] || value=$(env_get "$key")
+    value="${value:-${spec#*:}}"
+    case "$value" in
+      *[!0-9]*|'') die "Invalid host port: $key (expected 1-65535)" ;;
+    esac
+    if [ "${#value}" -gt 5 ] || [ "$((10#$value))" -lt 1 ] || [ "$((10#$value))" -gt 65535 ]; then
+      die "Invalid host port: $key (expected 1-65535)"
+    fi
+    printf -v "$key" '%s' "$value"
+    HOST_PORTS+=("$value")
+  done
 }
 
 # Config values must be purely alphanumeric: this script renders the seed JSON with sed, and a wider
@@ -256,6 +278,14 @@ generate_env() {
 
 # --- Locally built gateway image ---
 GATEWAY_IMAGE=banyanos-gateway:local
+
+# --- Published host ports (internal container ports stay fixed) ---
+GATEWAY_HOST_PORT=${GATEWAY_HOST_PORT:-8000}
+POSTGRES_HOST_PORT=${POSTGRES_HOST_PORT:-5432}
+REDIS_HOST_PORT=${REDIS_HOST_PORT:-6379}
+NEO4J_HTTP_HOST_PORT=${NEO4J_HTTP_HOST_PORT:-7474}
+NEO4J_BOLT_HOST_PORT=${NEO4J_BOLT_HOST_PORT:-7687}
+DYNAMODB_HOST_PORT=${DYNAMODB_HOST_PORT:-8001}
 
 # --- Banyan authentication delegates login to user_engine ---
 GATEWAY_AUTH_PROVIDER=${GATEWAY_AUTH_PROVIDER:-module}
@@ -560,17 +590,17 @@ print_summary() {
 ============================================================
  SilvaEngine Gateway（Banyan 数据面）部署完成
 ============================================================
-  网关地址      : http://<服务器IP>:8000  （本机探活 curl http://127.0.0.1:8000/health）
-  GraphQL 入口  : POST http://<服务器IP>:8000/beta/core/banyan/<engine>_engine_graphql
+  网关地址      : http://<服务器IP>:${GATEWAY_HOST_PORT}  （本机探活 curl http://127.0.0.1:${GATEWAY_HOST_PORT}/health）
+  GraphQL 入口  : POST http://<服务器IP>:${GATEWAY_HOST_PORT}/beta/core/banyan/<engine>_engine_graphql
   租户 part_id  : ${TENANT_PART_ID}
   生成文件      : .env（数据面密码，600 权限，勿提交）
                   env/se-configdata.local.json（JWT/x-api-key 等，600 权限，勿提交）
-  数据面        : postgres / neo4j / redis + DynamoDB Local（127.0.0.1:8001 仅本机）
+  数据面        : postgres / neo4j / redis + DynamoDB Local（127.0.0.1:${DYNAMODB_HOST_PORT} 仅本机）
 
 验证步骤（README §5 六步验收）：
-  curl -sS http://127.0.0.1:8000/health
+  curl -sS http://127.0.0.1:${GATEWAY_HOST_PORT}/health
   # 登录 mutation 骨架（携带 part_id 头 + Banyan JWT）：
-  # curl -sS -X POST http://127.0.0.1:8000/beta/core/banyan/user_engine_graphql \\
+  # curl -sS -X POST http://127.0.0.1:${GATEWAY_HOST_PORT}/beta/core/banyan/user_engine_graphql \\
   #   -H 'content-type: application/json' -H 'part_id: ${TENANT_PART_ID}' \\
   #   -d '{"query": "mutation { ... }"}'
   # 12 引擎 pytest 在开发机 banyan 仓执行（服务器无 Python）
@@ -585,7 +615,7 @@ print_summary() {
   # docker compose -f docker-compose.yml -f docker-compose.bindmount.yml \\
   #   -f docker-compose.ddb.yml logs -f gateway
 
-安全提醒：公网防火墙只放行 8000；8001/5432/6379/7474/7687 仅供本机调试。
+安全提醒：公网防火墙只放行 ${GATEWAY_HOST_PORT}；其余配置的宿主机端口仅供本机调试。
 ============================================================
 EOF
 }

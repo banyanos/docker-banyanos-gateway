@@ -1,0 +1,11 @@
+# Automatically loaded by `docker compose up`; reuse the source overlay.
+services:
+  gateway:
+    extends:
+      file: docker-compose.bindmount.yml
+      service: gateway
+
+# Compose extends imports service settings, but not top-level secrets.
+secrets:
+  github_ssh_key:
+    file: ${SSH_PRIVATE_KEY_FILE:-./.ssh/id_ed25519}

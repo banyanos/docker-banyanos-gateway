@@ -202,6 +202,13 @@ seed configuration when migrating.
 
 ### 7.2 Build and start
 
+`docker compose up -d` automatically loads `docker-compose.override.yml`,
+which reuses the source overlay's build settings and Banyanos source mount.
+The source overlay sets `pull_policy: build` so Compose builds the gateway
+instead of trying to pull `banyanos-gateway:local` from a registry.
+The explicit commands below select the same configuration. For a prebuilt
+image without the source overlay, use `docker compose -f docker-compose.yml up -d`.
+
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.bindmount.yml build gateway
 docker compose -f docker-compose.yml -f docker-compose.bindmount.yml up -d

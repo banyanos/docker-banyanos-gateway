@@ -1,6 +1,8 @@
 # SilvaEngine packages are pip-installed in the image; only Banyanos source is mounted.
 services:
   gateway:
+    # This tag is built locally, not downloaded from a container registry.
+    pull_policy: build
     build:
       context: .
       args:

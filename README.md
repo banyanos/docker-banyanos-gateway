@@ -1,7 +1,7 @@
 # docker-banyanos-gateway — Banyan 生产数据面部署（P0）
 
-> P0 最小交付：网关容器 + postgres + neo4j + redis，se-configdata 读真实云端
-> DynamoDB。nginx 统一入口（TLS / 前端反代）归 P1；任务/限流共享后端归 P2。
+> 默认运行网关 + postgres + neo4j + redis，配置直接读取
+> `env/se-configdata.local.json`。`db_backend` 独立选择业务数据存储。
 > 容器级操作（compose up、镜像构建）由使用者执行——本仓交付物为配置与脚本。
 
 ## 1. 架构
@@ -19,7 +19,7 @@ gateway (FastAPI, uvicorn :8000)
          ├─ postgres:16  关系型/审计/遥测（三池：postgres_main/audit/telemetry）
          ├─ neo4j:5      图数据 + 向量（唯一存储，铁律二）
          ├─ redis:7      瞬态令牌/验证码
-         └─ DynamoDB（云端 se-configdata，启动时只读）
+         └─ env/se-configdata.local.json（启动时只读）
                 └─ 跨引擎互调：httpx 池回环（BANYAN_LOOPBACK_BASE_URL）
                    引擎服务令牌经鉴权桥验证——与前端调用同一路径，无内部旁路
 ```
@@ -30,16 +30,19 @@ gateway (FastAPI, uvicorn :8000)
 `docker-silvaengine-gateway` 仓构建；PYTHONPATH 布局
 `/app/modules/<12 引擎仓根>`（SilvaEngine 包由 pip 安装到 site-packages），与 api-runtime 已验证形态一致）。
 
-AWS：默认读真实云端 `se-configdata`（`beta_core_banyan` 记录，**只读**），
-凭证需有该表读权限；完全离线用文末 DDB Local 变体。
+默认配置来源是 JSON，无需 se-configdata 数据库。业务数据使用
+`db_backend=postgresql` 或 `db_backend=dynamodb`；后者需要有效 AWS 配置。
+完整模板见 `.env.example`，源码挂载与本地构建见 §7。
 
 在本项目根目录下创建 `.env`（不要提交）：
 
 ```dotenv
 # --- 网关镜像 ---
-GATEWAY_IMAGE=silvaengine-gateway-banyan:latest
+GATEWAY_IMAGE=banyanos-gateway:local
+SETTING_SOURCE=json
+db_backend=postgresql
 
-# --- DynamoDB（云端 se-configdata，只读）---
+# --- AWS（仅使用 AWS 功能时需要真实凭据）---
 region_name=us-west-2
 aws_access_key_id=<AWS_KEY_WITH_DDB_READ>
 aws_secret_access_key=<AWS_SECRET>
@@ -69,7 +72,7 @@ docker compose ps          # 等 gateway healthy
 curl http://127.0.0.1:8000/health
 ```
 
-启动日志应出现：`se-configdata setting loaded: setting_id=beta_core_banyan`
+启动日志应出现：`JSON setting loaded:`
 与 `Pool bootstrap: framework pools created`——两者缺失说明
 配置叠加或池引导未生效，先排查再继续。
 
@@ -100,6 +103,8 @@ Agent 逐字流式（LLM Provider Plugin P3）需要变量 `llm_stream_redis`
 回答内容不变。
 
 ### 4.1 se-configdata 存于 PostgreSQL（无 DynamoDB）
+
+此节是旧式数据库配置存储的手动用法；默认 JSON 部署无需执行。
 
 网关也可从部署自身的 PostgreSQL 读取同一记录（`setting_id, variable,
 value JSONB` 每变量一行，表 `se_configdata`）：
@@ -202,6 +207,20 @@ seed configuration when migrating.
 
 ### 7.2 Build and start
 
+```dotenv
+SETTING_SOURCE=json
+db_backend=postgresql
+```
+
+Configuration is mounted read-only from `env/se-configdata.local.json`. Use real
+values and Docker service endpoints (`postgres:5432`, `redis:6379`, `neo4j:7687`)
+in that file. Invalid, empty, or placeholder configuration fails at startup.
+Restart the gateway after editing JSON. Existing JSON and credentials are preserved.
+Remove `COMPOSE_PROFILES`, `COMPOSE_FILE`, `COMPOSE_PATH_SEPARATOR`, and
+`SE_CONFIGDATA_BACKEND` if migrating from the intermediate backend-selector setup.
+The pinned pip-installed gateway receives a small JSON-loader patch during the
+image build; no framework source mounts or upstream repository changes are needed.
+
 Published host ports are configurable in `.env`: `GATEWAY_HOST_PORT` (8000),
 `POSTGRES_HOST_PORT` (5432), `REDIS_HOST_PORT` (6379),
 `NEO4J_HTTP_HOST_PORT` (7474), `NEO4J_BOLT_HOST_PORT` (7687), and
@@ -223,7 +242,13 @@ docker compose -f docker-compose.yml -f docker-compose.bindmount.yml up -d
 docker compose -f docker-compose.yml -f docker-compose.bindmount.yml logs -f gateway
 ```
 
-For DynamoDB Local include `-f docker-compose.ddb.yml` or run `bash deploy.sh`.
+The default setup reads configuration directly from `env/se-configdata.local.json`;
+no configuration database or initializer service is started. Set `db_backend=postgresql`
+or `db_backend=dynamodb` in `.env` to select application data storage independently.
+For DynamoDB application data, configure working AWS credentials; PostgreSQL remains
+the default. An explicit `.env` database choice overrides that field in the JSON.
+Legacy configuration-store scripts and `docker-compose.ddb.yml` remain available
+for older deployments; they are not used by the default setup or `deploy.sh`.
 Package installation happens at build time. Container restarts do not run pip.
 Banyanos source changes take effect after `docker compose ... restart gateway`.
 SilvaEngine changes require rebuilding the image. `requirements-silvaengine.txt`
@@ -248,7 +273,7 @@ bash scripts/bump_silvaengine.sh --main          # switch back to main
 bash scripts/bump_silvaengine.sh --branch prod   # any other branch name
 bash scripts/bump_silvaengine.sh --only silvaengine_gateway --staging
 bash scripts/bump_silvaengine.sh --build         # bump + build + recreate gateway (cloud DDB compose)
-bash deploy.sh --bump                            # bump to latest main, then the full DDB Local deploy
+bash deploy.sh --bump                            # bump to latest main, then deploy with JSON configuration
 bash deploy.sh --bump=staging                    # switch to staging + bump, then deploy
 bash deploy.sh --bump=dev                        # switch to dev + bump, then deploy
 ```
@@ -269,10 +294,10 @@ Use the acceptance checks in section 5. The base compose alone still supports
 a prebuilt image; that image must supply both the dependencies and Banyanos
 engines if the source overlay is omitted.
 
-## 8. 一键部署脚本 deploy.sh（模式 A 全自动）
+## 8. 一键部署脚本 deploy.sh（JSON 配置）
 
 `deploy.sh` 把 §2/§4/§7 的手工步骤（`.env` 生成、种子 JSON 渲染、源码树校验、
-端口预检、DDB Local 启动与初始化、五服务 up、健康与关键日志验证）封装为
+端口预检、镜像构建、JSON 校验、四服务 up、健康与关键日志验证）封装为
 幂等一键流程。目标服务器只需预装 Docker（含 Compose v2 插件），无需
 Python / jq / awscli；每阶段有状态输出，失败给出具体原因与排查建议后安全
 退出，修复后直接重跑，整体回滚 `bash deploy.sh down`。
@@ -281,7 +306,7 @@ Python / jq / awscli；每阶段有状态输出，失败给出具体原因与排
 
 同步本项目与 12 个 Banyanos 引擎目录，设置 `BANYAN_MODULES_DIR` 指向引擎仓根目录。
 SilvaEngine 仓与 vendor 快照无需同步。按 §7.1 放置 GitHub SSH 私钥；
-首次构建需要访问 GitHub 与 pip 索引，DynamoDB Local 仅替代云端配置数据库。
+首次构建需要访问 GitHub 与 pip 索引，配置直接读取 env 目录中的 JSON。
 
 ### 8.2 命令
 
@@ -308,9 +333,8 @@ SilvaEngine 仓与 vendor 快照无需同步。按 §7.1 放置 GitHub SSH 私�
 - 四态状态机：`.env`/JSON 都在→复用；都无→生成；仅 `.env`→补渲染；
   仅 JSON（孤儿态）→报错（防密码不一致）。配置值强制纯字母数字（sed
   渲染防注入），改密码后删 JSON 重跑。
-- 幂等与自愈：重复运行 `.env`/JSON 内容不变；每次重灌 DDB Local 种子，
-  `-inMemory` 重建后自动恢复。`--force-env` 为显式重新生成入口。
+- 幂等：重复运行保持 `.env`/JSON 内容不变；启动时直接校验和加载 JSON。
+  `--force-env` 为显式重新生成入口。
 - 与 §7 手动路径同一 compose project（目录名 deploy），容器/卷/网络互通。
-- base compose 若已手动取消注释 ddb-local，请注释回去（脚本会警告端口冲突）。
 - 公网防火墙只放行 8000；8001/5432/6379/7474/7687 仅供本机调试。
 - 12 引擎 pytest 仍在开发机 banyan 仓执行（服务器无 Python）。

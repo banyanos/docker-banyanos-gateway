@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# SilvaEngine Gateway — Banyan one-shot deploy script (mode A: DynamoDB Local)
+# SilvaEngine Gateway — Banyan deployment with direct JSON configuration
 #
 # The target server only needs Docker preinstalled (with the Compose v2 plugin); no Python / jq / awscli.
 # This script wraps the manual path in README.md (§2/§4/§7) into an idempotent one-shot flow:
@@ -8,10 +8,10 @@
 #   Stage 1  environment check     docker / daemon reachable / compose v2
 #   Stage 2  config & source check .env and seed JSON generate/reuse (four-state machine) +
 #                                  12 Banyanos engine source directories
-#   Stage 3  port pre-check        8000/8001/5432/6379/7474/7687 (identifies the occupier)
-#   Stage 4  start ddb-local       DynamoDB Local (-inMemory -sharedDb)
-#   Stage 5  ddb-init              create table → load seed (overwrite, idempotent) → verify row count
-#   Stage 6  start five services   ddb-local postgres neo4j redis gateway
+#   Stage 3  port pre-check        configured application service host ports
+#   Stage 4  build image           pip-installed gateway + JSON settings support
+#   Stage 5  validate JSON         env/se-configdata.local.json (no configuration database)
+#   Stage 6  start runtime         postgres neo4j redis gateway
 #   Stage 7  health & log checks   4 containers healthy + /health probe + two key startup log lines
 #   Stage 8  summary               addresses / tenant / verification steps / common operations
 #
@@ -30,11 +30,9 @@
 #   TENANT_PART_ID (default nestaging), BANYAN_MODULES_DIR, SSH_PRIVATE_KEY_FILE;
 #   GATEWAY_WAIT_TIMEOUT (health wait limit in seconds, default 600) can be set any time.
 #
-# Mode boundary: this script only does mode A (fully offline DDB Local); mode B,
-# which reads real cloud DynamoDB, uses the manual path in README.md §2/§4.
-#
-# Idempotency: reruns reuse .env and the seed JSON (content unchanged) and reload
-# the DDB Local seed every time (-inMemory recreation self-heals). Any failed stage
+# Configuration is read from JSON on gateway startup. Application data uses
+# db_backend=postgresql or dynamodb, independently of the configuration source.
+# Reruns preserve .env and the JSON file. Any failed stage
 # exits safely with a reason; fix it and rerun. Full rollback: bash deploy.sh down.
 #
 # Compatibility: bash 3.2+ (the macOS stock version works), no Python / associative array dependencies.
@@ -53,18 +51,18 @@ SEED_DIR="$DEPLOY_DIR/env"
 EXAMPLE_JSON="$SEED_DIR/se-configdata.example.json"
 SEED_JSON="$SEED_DIR/se-configdata.local.json"
 
-COMPOSE_FILES=(-f docker-compose.yml -f docker-compose.bindmount.yml -f docker-compose.ddb.yml)
-UP_SERVICES=(ddb-local postgres neo4j redis gateway)
-HOST_PORTS=(8000 8001 5432 6379 7474 7687)
+COMPOSE_FILES=(-f docker-compose.yml -f docker-compose.override.yml)
+UP_SERVICES=(postgres neo4j redis gateway)
+HOST_PORTS=(8000 5432 6379 7474 7687)
 ENGINE_REPOS=(agent_engine capability_engine knowledge_engine llm_engine \
   memory_engine merchant_engine monitor_engine orchestration_engine \
   perm_engine prompt_engine setting_engine user_engine)
-REQUIRED_LOGS=("se-configdata setting loaded: setting_id=" \
+REQUIRED_LOGS=("JSON setting loaded:" \
   "Pool bootstrap: framework pools created")
 OPTIONAL_LOGS=("Rewrote [0-9]+ httpx pool base_url")
 
 REQUIRED_ENV_KEYS=(GATEWAY_IMAGE TENANT_PART_ID POSTGRES_USER POSTGRES_PASSWORD \
-  POSTGRES_DB NEO4J_AUTH REDIS_PASSWORD SE_CONFIGDATA_ENDPOINT_URL \
+  POSTGRES_DB NEO4J_AUTH REDIS_PASSWORD \
   BANYAN_MODULES_DIR)
 
 WAIT_TIMEOUT="${GATEWAY_WAIT_TIMEOUT:-600}"
@@ -113,7 +111,7 @@ trap on_error ERR
 
 usage() {
   cat <<'USAGE'
-SilvaEngine Gateway — Banyan 一键部署（模式 A：DynamoDB Local）
+SilvaEngine Gateway — Banyan 一键部署（JSON configuration）
 
 用法: bash deploy.sh [命令] [选项]
 
@@ -221,7 +219,7 @@ load_host_ports() {
   local spec key value
   HOST_PORTS=()
   for spec in GATEWAY_HOST_PORT:8000 POSTGRES_HOST_PORT:5432 REDIS_HOST_PORT:6379 \
-    NEO4J_HTTP_HOST_PORT:7474 NEO4J_BOLT_HOST_PORT:7687 DYNAMODB_HOST_PORT:8001; do
+    NEO4J_HTTP_HOST_PORT:7474 NEO4J_BOLT_HOST_PORT:7687; do
     key="${spec%%:*}"
     value="${!key:-}"
     [ -n "$value" ] || value=$(env_get "$key")
@@ -279,6 +277,10 @@ generate_env() {
 # --- Locally built gateway image ---
 GATEWAY_IMAGE=banyanos-gateway:local
 
+# --- Configuration from JSON; application database selected independently ---
+SETTING_SOURCE=json
+db_backend=${db_backend:-postgresql}
+
 # --- Published host ports (internal container ports stay fixed) ---
 GATEWAY_HOST_PORT=${GATEWAY_HOST_PORT:-8000}
 POSTGRES_HOST_PORT=${POSTGRES_HOST_PORT:-5432}
@@ -292,7 +294,7 @@ GATEWAY_AUTH_PROVIDER=${GATEWAY_AUTH_PROVIDER:-module}
 GATEWAY_AUTH_MODULE_DISPATCH=${GATEWAY_AUTH_MODULE_DISPATCH:-user_engine.main:dispatch_graphql}
 JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
 ACCESS_TOKEN_EXP=${ACCESS_TOKEN_EXP:-15}
-# Leave JWT_SECRET_KEY unset to use the shared jwt_secret from se-configdata.
+# Leave JWT_SECRET_KEY unset to use the shared jwt_secret from the JSON file.
 
 # --- Tenant ---
 TENANT_PART_ID=${part_id}
@@ -304,9 +306,8 @@ POSTGRES_DB=banyan
 NEO4J_AUTH=neo4j/${neo4j_pw}
 REDIS_PASSWORD=${redis_pw}
 
-# --- se-configdata: mode A reads DDB Local (offline) ---
-SE_CONFIGDATA_ENDPOINT_URL=http://ddb-local:8000
-# boto3 still needs signing credentials for DDB Local (fake ones are fine; DDB Local doesn't validate them)
+# --- AWS credentials: configure real credentials for db_backend=dynamodb ---
+# Placeholder signing credentials for PostgreSQL-only local use
 region_name=us-west-2
 aws_access_key_id=local
 aws_secret_access_key=local
@@ -364,7 +365,7 @@ render_seed_json() {
   fi
   if grep -q '"_comment"' "$tmp_f"; then
     rm -f "$tmp_f"
-    die "种子 JSON 仍含 _comment 键（会被当垃圾变量灌入 DDB）"
+    die "种子 JSON 仍含 _comment 模板元数据"
   fi
   mv -f "$tmp_f" "$SEED_JSON"
   chmod 600 "$SEED_JSON"
@@ -418,10 +419,6 @@ validate_source_paths() {
     die "源码树不完整——按上方清单补齐后重跑；源路径可用环境变量覆盖（见 -h）"
   fi
 
-  # If the base compose file's ddb-local is manually uncommented, it conflicts with the overlay's port mapping
-  if grep -q '^[[:space:]]*ddb-local:' "$DEPLOY_DIR/docker-compose.yml"; then
-    printf '[deploy.sh] 警告：docker-compose.yml 中 ddb-local 已取消注释，可能与 docker-compose.ddb.yml 的端口映射冲突；建议保持注释（Overlay 已提供该服务）\n' >&2
-  fi
   log "源码树校验通过：12 Banyanos engines + pip requirements + build SSH key"
 }
 
@@ -528,11 +525,6 @@ wait_healthy() {
         all_ok=0
       fi
     done
-    st=$(docker inspect -f '{{.State.Running}}' banyanos-ddb-local 2>/dev/null || true)
-    line="$line ddb-local=${st:-none}"
-    if [ "$st" != "true" ]; then
-      all_ok=0
-    fi
     if [ "$all_ok" = "1" ]; then
       log "全部容器健康：$line"
       return 0
@@ -570,7 +562,7 @@ check_log() {
       printf '[deploy.sh] 缺失关键日志：%s\n' "$pat" >&2
     done
     if [ "$1" = "required" ]; then
-      die "网关启动关键日志缺失——se-configdata 叠加或池引导未生效；完整日志：docker logs banyanos-gateway"
+      die "网关启动关键日志缺失——JSON 配置加载或池引导未生效；完整日志：docker logs banyanos-gateway"
     fi
   fi
   for pat in "${OPTIONAL_LOGS[@]}"; do
@@ -595,7 +587,7 @@ print_summary() {
   租户 part_id  : ${TENANT_PART_ID}
   生成文件      : .env（数据面密码，600 权限，勿提交）
                   env/se-configdata.local.json（JWT/x-api-key 等，600 权限，勿提交）
-  数据面        : postgres / neo4j / redis + DynamoDB Local（127.0.0.1:${DYNAMODB_HOST_PORT} 仅本机）
+  数据面        : postgres / neo4j / redis; configuration: env/se-configdata.local.json
 
 验证步骤（README §5 六步验收）：
   curl -sS http://127.0.0.1:${GATEWAY_HOST_PORT}/health
@@ -612,8 +604,7 @@ print_summary() {
   bash deploy.sh --restart       # 改源码/种子 JSON 后重启网关
   bash deploy.sh --force-env     # 重新生成全部密码
   # 跟踪日志（三文件 Overlay）：
-  # docker compose -f docker-compose.yml -f docker-compose.bindmount.yml \\
-  #   -f docker-compose.ddb.yml logs -f gateway
+  # docker compose logs -f gateway
 
 安全提醒：公网防火墙只放行 ${GATEWAY_HOST_PORT}；其余配置的宿主机端口仅供本机调试。
 ============================================================
@@ -649,17 +640,14 @@ cmd_up() {
     return 0
   fi
 
-  set_stage 4 "启动 DynamoDB Local" \
-    "镜像 amazon/dynamodb-local 不走 DOCKER_MIRROR_PREFIX（非 Docker Hub library 镜像），直连拉取失败时可先 docker pull amazon/dynamodb-local:latest 再重跑"
-  dc up -d ddb-local
-
-  set_stage 5 "初始化 se-configdata（建表/灌种子/核验）" \
-    "失败多为种子 JSON 渲染或容器网络问题；详情：docker compose -f docker-compose.yml -f docker-compose.bindmount.yml -f docker-compose.ddb.yml logs ddb-init；重跑幂等"
-  dc run --rm ddb-init
-
-  set_stage 6 "启动网关与数据面（五服务）" \
-    "镜像拉取失败检查网络/DOCKER_MIRROR_PREFIX；bind-mount 源路径以 .env 为准；pip 慢可设 PIP_INDEX_URL"
+  set_stage 4 "Build gateway image" "Check pip index and GitHub SSH key configuration"
   dc build gateway
+
+  set_stage 5 "Validate env/se-configdata.local.json" "Fix invalid JSON or unresolved placeholders in the configuration file"
+  dc run --rm --no-deps --entrypoint python gateway -c \
+    'from silvaengine_gateway.json_settings import load_json_settings; load_json_settings("/app/env/se-configdata.local.json"); print("JSON configuration validated")'
+
+  set_stage 6 "Start gateway and application data services" "Check container logs"
   dc up -d "${UP_SERVICES[@]}"
   if [ "$RESTART" = "1" ]; then
     log "--restart：重启 gateway"
@@ -691,11 +679,6 @@ cmd_status() {
       bad=1
     fi
   done
-  st=$(docker inspect -f '{{.State.Running}}' banyanos-ddb-local 2>/dev/null || true)
-  printf '  %-34s %s\n' "banyanos-ddb-local" "${st:-未运行}"
-  if [ "$st" != "true" ]; then
-    bad=1
-  fi
   check_log info
   if [ "$bad" = "1" ]; then
     log "存在未健康/未运行的容器（上方状态）"
@@ -768,8 +751,8 @@ cmd_self_test() {
   local pw_check
   pw_check=$(env_get POSTGRES_PASSWORD)
   expect_eq "GATEWAY_IMAGE local build" "$(env_get GATEWAY_IMAGE)" "banyanos-gateway:local"
-  expect_eq "SE_CONFIGDATA_ENDPOINT_URL 指向 ddb-local" \
-    "$(env_get SE_CONFIGDATA_ENDPOINT_URL)" "http://ddb-local:8000"
+  expect_eq "Configuration source JSON" "$(env_get SETTING_SOURCE)" "json"
+  expect_eq "Application backend configured" "$(env_get db_backend)" "${db_backend:-postgresql}"
   expect_eq "POSTGRES_PASSWORD 16 位" "${#pw_check}" "16"
   expect_eq "POSTGRES_PASSWORD 纯字母数字" \
     "$(printf '%s' "$pw_check" | grep -c '^[A-Za-z0-9]*$' || true)" "1"
@@ -868,7 +851,7 @@ if [ "$MODE" != "down" ] && [ "$VOLUMES" = "1" ]; then
   exit 1
 fi
 
-log "SilvaEngine Gateway 一键部署（模式 A：DynamoDB Local）"
+log "SilvaEngine Gateway 一键部署（JSON configuration）"
 
 case "$MODE" in
   selftest)

@@ -5,8 +5,8 @@
 #
 # Architecture: browser/frontend → gateway (single FastAPI container, 12 engines
 #   dispatched in-process) → postgres / neo4j / redis; se-configdata settings
-#   are read from real cloud DynamoDB by default (read once at startup,
-#   read-only), with DynamoDB Local as an optional variant (see end of file).
+#   are read directly from env/se-configdata.local.json at startup.
+#   Legacy database-backed configuration remains opt-in.
 #
 # Gateway image requirements (delivered in P1 by the docker-silvaengine-gateway repo):
 #   The image must contain both the gateway and the Banyan runtime —
@@ -43,13 +43,20 @@ services:
       - PYTHONUNBUFFERED=1
       - PYTHONDONTWRITEBYTECODE=1
       # Banyan hosting switches (Banyan hosting built into the gateway):
-      #   SETTING_SOURCE=se-configdata → overlay the DDB record onto the
-      #     setting at startup (DDB keys win)
+      #   SETTING_SOURCE=json overlays the mounted JSON before initialization.
+      #   db_backend independently selects application data storage.
       #   ENDPOINT_ID/ADAPTER_STAGE/ADAPTER_AREA → form the se-configdata
       #     setting_id ({stage}_{area}_{endpoint_id}); the PermAuthorizer
       #     auth bridge and path normalizer mount per the route manifest's
       #     auth_bridge, independent of ENDPOINT_ID
-      - SETTING_SOURCE=se-configdata
+      - SETTING_SOURCE=${SETTING_SOURCE:-json}
+      - SETTING_JSON_FILE=/app/env/se-configdata.local.json
+      - db_backend=${db_backend:-postgresql}
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_USER=${POSTGRES_USER:?set POSTGRES_USER in .env}
+      - PG_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      - PG_DB=${POSTGRES_DB:?set POSTGRES_DB in .env}
       - ENDPOINT_ID=${ENDPOINT_ID:-banyan}
       - ADAPTER_STAGE=${ADAPTER_STAGE:-beta}
       - ADAPTER_AREA=${ADAPTER_AREA:-core}
@@ -67,6 +74,13 @@ services:
       # paths, no stage/area prefix). A capability_mcp_gateway_base_url in
       # se-configdata takes precedence.
       - CAPABILITY_MCP_GATEWAY_BASE_URL=${CAPABILITY_MCP_GATEWAY_BASE_URL:-http://127.0.0.1:8000}
+    volumes:
+      - type: bind
+        source: ./env/se-configdata.local.json
+        target: /app/env/se-configdata.local.json
+        read_only: true
+        bind:
+          create_host_path: false
     command:
       - uvicorn
       - silvaengine_gateway.app:create_app_from_env

@@ -2,3 +2,7 @@
 !Dockerfile
 !requirements-bindmount.txt
 !requirements-silvaengine.txt
+!scripts/
+!scripts/json_settings.py
+!patches/
+!patches/gateway-json-settings.patch

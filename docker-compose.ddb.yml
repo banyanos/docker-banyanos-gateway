@@ -1,29 +1,5 @@
-# =============================================================================
-# SilvaEngine Gateway — DDB Local overlay (companion to deploy.sh one-shot deploy)
-#
-# Stacking order: docker-compose.yml (base) + docker-compose.bindmount.yml + this file
-# (see deploy.sh, whose compose command always passes all three -f).
-# Only adds two services and overlaps no key in base/bindmount — the ddb-local
-# comment block at the end of the base file stays as is and needs no uncommenting:
-#
-#   ddb-local — DynamoDB Local (-inMemory -sharedDb). Host port 8001 binds only
-#               to 127.0.0.1 (for local debugging/manual table loads; not
-#               publicly visible).
-#   ddb-init  — one-shot init service (plain python:3.12-slim): wait for the endpoint →
-#               idempotently create the table → load the seed (overwrite) →
-#               verify row count. Driven by deploy.sh via
-#               `docker compose run --rm ddb-init`; deploy.sh's up lists its
-#               services explicitly and excludes this one.
-#
-# Idempotency: every deploy reruns ddb-init and reloads the seed, healing the
-# data loss after ddb-local -inMemory is recreated. Table schema/row format
-# match scripts/seed_seconfig.py and the Lambda chain's ConfigModel exactly.
-#
-# Note: the x-logging anchor is single-file scoped (compose doesn't merge
-# anchors across files); this file's log rotation matches base
-# (json-file 10MB × 3).
-# =============================================================================
-
+# Optional DynamoDB Local service for application data. Configuration uses JSON.
+# Stack with docker-compose.yml and docker-compose.bindmount.yml when needed.
 services:
   ddb-local:
     image: amazon/dynamodb-local:latest
@@ -37,32 +13,3 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-
-  ddb-init:
-    image: ${DOCKER_MIRROR_PREFIX:-docker.1ms.run/library/}python:3.12-slim
-    environment:
-      PIP_INDEX_URL: ${PIP_INDEX_URL:?set PIP_INDEX_URL in .env}
-      PIP_DISABLE_PIP_VERSION_CHECK: "1"
-    volumes:
-      - ./scripts:/ddb:ro
-      - ./env:/ddbenv:ro
-      - gateway-ddbinit-pip-cache:/root/.cache/pip
-    depends_on:
-      - ddb-local
-    restart: "no"
-    command:
-      - bash
-      - -c
-      - |
-        pip install -q boto3 && python /ddb/ddb_init.py \
-          --file /ddbenv/se-configdata.local.json \
-          --endpoint-url http://ddb-local:8000
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-volumes:
-  gateway-ddbinit-pip-cache:
-    name: silvaengine-gateway_ddbinit-pip-cache

@@ -645,7 +645,7 @@ cmd_up() {
 
   set_stage 5 "Validate env/se-configdata.local.json" "Fix invalid JSON or unresolved placeholders in the configuration file"
   dc run --rm --no-deps --entrypoint python gateway -c \
-    'from silvaengine_gateway.json_settings import load_json_settings; load_json_settings("/app/env/se-configdata.local.json"); print("JSON configuration validated")'
+    'from scripts.json_settings import load_json_settings; load_json_settings("/app/env/se-configdata.local.json"); print("JSON configuration validated")'
 
   set_stage 6 "Start gateway and application data services" "Check container logs"
   dc up -d "${UP_SERVICES[@]}"

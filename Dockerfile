@@ -4,7 +4,7 @@ FROM ${PYTHON_IMAGE}
 WORKDIR /app
 ARG PIP_INDEX_URL
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_DISABLE_PIP_VERSION_CHECK=1
-RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client patch \
+RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client \
     && rm -rf /var/lib/apt/lists/*
 COPY requirements-bindmount.txt requirements-silvaengine.txt ./
 # The key is available only during this RUN and is never copied into the image.
@@ -17,11 +17,7 @@ RUN --mount=type=secret,id=github_ssh_key,required=true,mode=0400 \
     && pip install --index-url "${PIP_INDEX_URL}" -r requirements-bindmount.txt \
     && GIT_SSH_COMMAND="ssh -i /run/secrets/github_ssh_key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes" \
        pip install --index-url "${PIP_INDEX_URL}" --no-deps -r requirements-silvaengine.txt
-# Extend the pinned pip-installed gateway without mounting framework source.
-COPY scripts/json_settings.py patches/gateway-json-settings.patch /tmp/
-RUN gateway_file="$(python -c 'from importlib.metadata import distribution; print(distribution("silvaengine_gateway").locate_file("silvaengine_gateway/setting_builder.py"))')" \
-    && patch --batch --fuzz=0 "$gateway_file" /tmp/gateway-json-settings.patch \
-    && install -m 644 /tmp/json_settings.py "$(dirname "$gateway_file")/json_settings.py" \
-    && rm /tmp/json_settings.py /tmp/gateway-json-settings.patch
+# Deployment-owned factory; installed framework packages remain unmodified.
+COPY scripts/__init__.py scripts/json_settings.py scripts/gateway_app.py /app/scripts/
 EXPOSE 8000
-CMD ["uvicorn", "silvaengine_gateway.app:create_app_from_env", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "scripts.gateway_app:create_app_from_env", "--factory", "--host", "0.0.0.0", "--port", "8000"]

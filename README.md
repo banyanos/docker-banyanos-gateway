@@ -59,8 +59,6 @@ REDIS_PASSWORD=<REDIS_PASSWORD>
 # ADAPTER_STAGE=beta
 # ADAPTER_AREA=core
 # BANYAN_LOOPBACK_BASE_URL=http://127.0.0.1:8000/beta/core/banyan
-# SE_CONFIGDATA_TABLE=se-configdata
-# SE_CONFIGDATA_ENDPOINT_URL=http://ddb-local:8000   # DDB Local 变体
 ```
 
 ## 3. 启动
@@ -79,7 +77,7 @@ curl http://127.0.0.1:8000/health
 ## 4. se-configdata 记录
 
 `env/se-configdata.example.json` 是**占位模板**（无真实密钥），记录形态：
-`(setting_id, variable) → value` 每变量一行；`plugins` 为列表，
+JSON 根对象为 `{variable: value}`；`plugins` 为列表，
 池配置位于 `plugins[0]["config"][<pool>]["settings"]`。
 
 权威变量集合是 staging 真实记录——用
@@ -87,14 +85,7 @@ curl http://127.0.0.1:8000/health
 填充/裁剪模板；`httpx_*` 池的 `base_url` 会被 `BANYAN_LOOPBACK_BASE_URL`
 启动时统一改写为回环地址，无需在记录里预改。
 
-灌表（仅 DDB Local 变体需要）：
-
-```bash
-python scripts/seed_seconfig.py --file env/se-configdata.local.json \
-    --endpoint-url http://127.0.0.1:8001 --apply
-```
-
-默认 dry-run，`--apply` 才写。含真实密钥的文件严禁提交任何仓库。
+配置直接从 JSON 加载，不需要灌表。含真实密钥的文件严禁提交任何仓库。
 
 Agent 逐字流式（LLM Provider Plugin P3）需要变量 `llm_stream_redis`
 （llm_engine 写 `llm:stream:{id}`、agent_engine 读；`host` / `port` / `db` /
@@ -102,27 +93,7 @@ Agent 逐字流式（LLM Provider Plugin P3）需要变量 `llm_stream_redis`
 指向同一 Redis）。缺省时对话退化为调用级事件（started → completed），
 回答内容不变。
 
-### 4.1 se-configdata 存于 PostgreSQL（无 DynamoDB）
-
-此节是旧式数据库配置存储的手动用法；默认 JSON 部署无需执行。
-
-网关也可从部署自身的 PostgreSQL 读取同一记录（`setting_id, variable,
-value JSONB` 每变量一行，表 `se_configdata`）：
-
-```dotenv
-SETTING_SOURCE=se-configdata
-SE_CONFIGDATA_BACKEND=postgresql
-SE_CONFIGDATA_DATABASE_URL=postgresql+psycopg://USER:PASS@HOST:5432/DB   # 缺省回落 PG_HOST/PG_USER/PG_DB…
-# SE_CONFIGDATA_PG_TABLE=se_configdata
-```
-
-灌表（幂等 upsert，自动建表）：
-
-```bash
-SE_CONFIGDATA_DATABASE_URL=... python scripts/seed_seconfig_pg.py     --file env/se-configdata.local.json [--setting-id beta_core_banyan]
-```
-
-### 4.2 首个平台管理员与权限资源（新库必做）
+### 4.1 首个平台管理员与权限资源（新库必做）
 
 新库没有管理员，API 也不允许非超管分配预置角色 `platform:super_admin`；
 菜单/页面/按钮权限资源只由 `registerResources` 注册——未执行时前端各页显示
@@ -218,8 +189,11 @@ in that file. Invalid, empty, or placeholder configuration fails at startup.
 Restart the gateway after editing JSON. Existing JSON and credentials are preserved.
 Remove `COMPOSE_PROFILES`, `COMPOSE_FILE`, `COMPOSE_PATH_SEPARATOR`, and
 `SE_CONFIGDATA_BACKEND` if migrating from the intermediate backend-selector setup.
-The pinned pip-installed gateway receives a small JSON-loader patch during the
-image build; no framework source mounts or upstream repository changes are needed.
+The deployment factory `scripts.gateway_app:create_app_from_env` loads JSON before
+initializing the gateway and passes the settings to its existing `create_app` function.
+Installed SilvaEngine packages are unmodified; no build-time patches are applied.
+The factory uses setting-builder helpers from the pinned gateway version; validate
+this integration when upgrading that pin.
 
 Published host ports are configurable in `.env`: `GATEWAY_HOST_PORT` (8000),
 `POSTGRES_HOST_PORT` (5432), `REDIS_HOST_PORT` (6379),
@@ -247,8 +221,8 @@ no configuration database or initializer service is started. Set `db_backend=pos
 or `db_backend=dynamodb` in `.env` to select application data storage independently.
 For DynamoDB application data, configure working AWS credentials; PostgreSQL remains
 the default. An explicit `.env` database choice overrides that field in the JSON.
-Legacy configuration-store scripts and `docker-compose.ddb.yml` remain available
-for older deployments; they are not used by the default setup or `deploy.sh`.
+`docker-compose.ddb.yml` optionally starts DynamoDB Local for application data;
+it does not seed a configuration table. Configuration always comes from JSON.
 Package installation happens at build time. Container restarts do not run pip.
 Banyanos source changes take effect after `docker compose ... restart gateway`.
 SilvaEngine changes require rebuilding the image. `requirements-silvaengine.txt`

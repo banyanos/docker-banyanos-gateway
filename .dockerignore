@@ -4,5 +4,5 @@
 !requirements-silvaengine.txt
 !scripts/
 !scripts/json_settings.py
-!patches/
-!patches/gateway-json-settings.patch
+!scripts/__init__.py
+!scripts/gateway_app.py

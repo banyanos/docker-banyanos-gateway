@@ -6,7 +6,6 @@
 # Architecture: browser/frontend → gateway (single FastAPI container, 12 engines
 #   dispatched in-process) → postgres / neo4j / redis; se-configdata settings
 #   are read directly from env/se-configdata.local.json at startup.
-#   Legacy database-backed configuration remains opt-in.
 #
 # Gateway image requirements (delivered in P1 by the docker-silvaengine-gateway repo):
 #   The image must contain both the gateway and the Banyan runtime —
@@ -66,9 +65,6 @@ services:
       # frontend calls). base_url is rewritten to this value at startup;
       # engines' upstream LLM calls pass absolute URLs and are unaffected.
       - BANYAN_LOOPBACK_BASE_URL=${BANYAN_LOOPBACK_BASE_URL:-http://127.0.0.1:8000/beta/core/banyan}
-      - SE_CONFIGDATA_TABLE=${SE_CONFIGDATA_TABLE:-se-configdata}
-      # For the DDB Local variant, set SE_CONFIGDATA_ENDPOINT_URL in .env to pass it through
-      - SE_CONFIGDATA_ENDPOINT_URL=${SE_CONFIGDATA_ENDPOINT_URL:-}
       # capability_engine loops back to this gateway's mcp_protocol_plugin routes
       # (/{endpoint_id}/mcp_daemon_graphql etc., the gateway's native single-segment
       # paths, no stage/area prefix). A capability_mcp_gateway_base_url in
@@ -83,7 +79,7 @@ services:
           create_host_path: false
     command:
       - uvicorn
-      - silvaengine_gateway.app:create_app_from_env
+      - scripts.gateway_app:create_app_from_env
       - --factory
       - --host
       - "0.0.0.0"
@@ -187,29 +183,6 @@ services:
       start_period: 10s
     logging: *default-logging
 
-  # ---------------------------------------------------------------------------
-  # Optional variant: DynamoDB Local (fully offline; se-configdata uses a local table)
-  #
-  # To enable:
-  #   1. Uncomment the service below, then `docker compose up -d ddb-local`
-  #   2. Load the table with a real/seed record:
-  #      python scripts/seed_seconfig.py --file env/se-configdata.local.json \
-  #          --endpoint-url http://127.0.0.1:8001 --apply
-  #   3. Set in .env: SE_CONFIGDATA_ENDPOINT_URL=http://ddb-local:8000
-  #      (containers reach it via the service name ddb-local; load the table
-  #      from the host via 127.0.0.1:8001)
-  #   4. Restart gateway so the setting reloads
-  # Note: amazon/dynamodb-local is not a Docker Hub official image, so the
-  # mirror path has no library/ segment and DOCKER_MIRROR_PREFIX does not apply.
-  # ---------------------------------------------------------------------------
-  # ddb-local:
-  #   image: amazon/dynamodb-local:latest
-  #   container_name: banyanos-ddb-local
-  #   ports:
-  #     - "127.0.0.1:${DYNAMODB_HOST_PORT:-8001}:8000"
-  #   command: ["-jar", "DynamoDBLocal.jar", "-inMemory", "-sharedDb"]
-  #   restart: unless-stopped
-  #   logging: *default-logging
 
 volumes:
   gateway-pg-data:

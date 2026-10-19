@@ -257,6 +257,13 @@ generate_env() {
 # --- Locally built gateway image ---
 GATEWAY_IMAGE=banyanos-gateway:local
 
+# --- Banyan authentication delegates login to user_engine ---
+GATEWAY_AUTH_PROVIDER=${GATEWAY_AUTH_PROVIDER:-module}
+GATEWAY_AUTH_MODULE_DISPATCH=${GATEWAY_AUTH_MODULE_DISPATCH:-user_engine.main:dispatch_graphql}
+JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
+ACCESS_TOKEN_EXP=${ACCESS_TOKEN_EXP:-15}
+# Leave JWT_SECRET_KEY unset to use the shared jwt_secret from se-configdata.
+
 # --- Tenant ---
 TENANT_PART_ID=${part_id}
 

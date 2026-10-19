@@ -1,6 +1,6 @@
 # Shared framework, gateway, and MCP packages installed by pip from private GitHub repos.
 # Pinned to commit SHAs (no release tags yet). The trailing comment on each line is
-# the branch that pin tracks. Last refreshed 2026-10-11.
+# the branch that pin tracks. Last refreshed 2026-10-18.
 # To upgrade: bash scripts/bump_silvaengine.sh (--main|--dev|--staging to switch), then rebuild.
 # Install --no-deps after requirements-bindmount.txt (the explicit runtime dependency set).
 git+ssh://git@github.com/ideabosque/silvaengine_constants.git@207788c563d1db9dd8c7dd425e1afe39d72dae79#egg=silvaengine_constants  # main
@@ -12,7 +12,7 @@ git+ssh://git@github.com/ideabosque/silvaengine_base.git@796c60a417648432e1dddc5
 git+ssh://git@github.com/ideabosque/mcp_http_client.git@9e46d9aabc5140db34ed6e27d30ff48b2e8b4363#egg=mcp_http_client  # main
 git+ssh://git@github.com/ideabosque/silvaengine_daemon.git@a0f6267e33fd56f8ded41eac8aad22241a096bd8#egg=silvaengine_daemon  # main
 git+ssh://git@github.com/ideabosque/mcp_protocol_plugin.git@57e932de64931df331bfa022db1ad9d507bbfed3#egg=mcp_protocol_plugin  # main
-git+ssh://git@github.com/ideabosque/silvaengine_gateway.git@0bc851f22293d2af9cc4746716bf01764481e5e6#egg=silvaengine_gateway  # main
+git+ssh://git@github.com/ideabosque/silvaengine_gateway.git@8f68d848d9bfc4b2ea93202df0f61cd881c275de#egg=silvaengine_gateway  # main
 # LLM provider plugins (plan §1.2 / D9): the six banyanos/llm_provider_*
 # projects are BanyanOS modules, supplied like the engines through
 # BANYAN_MODULES_DIR + PYTHONPATH (docker-compose.bindmount.yml) and found by

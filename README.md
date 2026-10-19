@@ -192,7 +192,7 @@ GATEWAY_IMAGE=banyanos-gateway:local
 BANYAN_MODULES_DIR=C:/Users/bibo7/gitrepo/banyanos
 SSH_PRIVATE_KEY_FILE=./.ssh/id_ed25519
 # Alternatively point SSH_PRIVATE_KEY_FILE at an existing private key.
-# PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+PIP_INDEX_URL=https://pypi.org/simple/
 # SILVAENGINE_CACHE_TTL=300
 ```
 

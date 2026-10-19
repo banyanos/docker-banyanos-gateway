@@ -278,9 +278,9 @@ aws_secret_access_key=local
 BANYAN_MODULES_DIR=${BANYAN_MODULES_DIR}
 # Private GitHub access for image build; key never enters the image.
 SSH_PRIVATE_KEY_FILE=${SSH_PRIVATE_KEY_FILE:-./.ssh/id_ed25519}
+PIP_INDEX_URL=${PIP_INDEX_URL:-https://pypi.org/simple/}
 
 # --- Optional overrides (uncomment to enable) ---
-# PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 # SILVAENGINE_CACHE_TTL=300
 # BANYAN_LOOPBACK_BASE_URL=http://127.0.0.1:8000/beta/core/banyan
 EOF

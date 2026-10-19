@@ -41,7 +41,7 @@ services:
   ddb-init:
     image: ${DOCKER_MIRROR_PREFIX:-docker.1ms.run/library/}python:3.12-slim
     environment:
-      PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}
+      PIP_INDEX_URL: ${PIP_INDEX_URL:?set PIP_INDEX_URL in .env}
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
     volumes:
       - ./scripts:/ddb:ro

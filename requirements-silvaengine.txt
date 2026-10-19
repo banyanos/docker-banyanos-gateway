@@ -1,10 +1,10 @@
 # Shared framework, gateway, and MCP packages installed by pip from private GitHub repos.
 # Pinned to commit SHAs (no release tags yet). The trailing comment on each line is
-# the branch that pin tracks. Last refreshed 2026-10-18.
+# the branch that pin tracks. Utility pin refreshed 2026-10-19; others 2026-10-18.
 # To upgrade: bash scripts/bump_silvaengine.sh (--main|--dev|--staging to switch), then rebuild.
 # Install --no-deps after requirements-bindmount.txt (the explicit runtime dependency set).
 git+ssh://git@github.com/ideabosque/silvaengine_constants.git@207788c563d1db9dd8c7dd425e1afe39d72dae79#egg=silvaengine_constants  # main
-git+ssh://git@github.com/ideabosque/silvaengine_utility.git@7009cc4a05f8ea6d83a177abdb3dc2bd9aa4715b#egg=silvaengine_utility  # main
+git+ssh://git@github.com/ideabosque/silvaengine_utility.git@b7f000d18c2e68959e7342290f3965aac2f090f8#egg=silvaengine_utility  # main
 git+ssh://git@github.com/ideabosque/silvaengine_dynamodb_base.git@878b8ca8595f751715f0290d4398934c0e96b9a6#egg=silvaengine_dynamodb_base  # main
 git+ssh://git@github.com/ideabosque/silvaengine_definitions.git@c8d03153f0e81f468c67a52dc226bc09c9b58ed9#egg=silvaengine_definitions  # main
 git+ssh://git@github.com/ideabosque/silvaengine_connections.git@6d8d15d7b289be2fc43a10240cc3a2a83f07505e#egg=silvaengine_connections  # main

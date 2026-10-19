@@ -93,6 +93,16 @@ Agent 逐字流式（LLM Provider Plugin P3）需要变量 `llm_stream_redis`
 指向同一 Redis）。缺省时对话退化为调用级事件（started → completed），
 回答内容不变。
 
+Local GraphQL subscription delivery requires `silvaengine_utility` commit
+`b7f000d18c2e68959e7342290f3965aac2f090f8` from `main` (pinned in
+`requirements-silvaengine.txt`). The gateway registers its in-process
+ConnectionManager through that revision's public hook. Browser connections use
+`ws://127.0.0.1:<GATEWAY_HOST_PORT>/banyan/banyan_ws`; the frontend derives
+`part_id` from the signed-in user's tenant, falling back to the deployment
+partition for platform users. `Show reasoning` requests model-provided
+reasoning events separately from answer chunks. It controls event visibility;
+the model may still compute reasoning when the switch is off.
+
 ### 4.1 首个平台管理员与权限资源（新库必做）
 
 新库没有管理员，API 也不允许非超管分配预置角色 `platform:super_admin`；

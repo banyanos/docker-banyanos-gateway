@@ -11,7 +11,7 @@ services:
       secrets:
         - github_ssh_key
     environment:
-      PYTHONPATH: /app/modules/agent_engine:/app/modules/capability_engine:/app/modules/knowledge_engine:/app/modules/llm_engine:/app/modules/memory_engine:/app/modules/merchant_engine:/app/modules/monitor_engine:/app/modules/orchestration_engine:/app/modules/perm_engine:/app/modules/prompt_engine:/app/modules/setting_engine:/app/modules/user_engine:/app/modules/llm_provider_base:/app/modules/llm_provider_anthropic:/app/modules/llm_provider_openai:/app/modules/llm_provider_openai_chat:/app/modules/llm_provider_gemini:/app/modules/llm_provider_ollama
+      PYTHONPATH: /app/modules/agent_engine:/app/modules/capability_engine:/app/modules/knowledge_engine:/app/modules/llm_engine:/app/modules/memory_engine:/app/modules/merchant_engine:/app/modules/monitor_engine:/app/modules/orchestration_engine:/app/modules/perm_engine:/app/modules/prompt_engine:/app/modules/setting_engine:/app/modules/user_engine:/app/modules/llm_provider_base:/app/modules/llm_provider_anthropic:/app/modules/llm_provider_openai:/app/modules/llm_provider_openai_chat:/app/modules/llm_provider_gemini:/app/modules/llm_provider_ollama${EXTRA_PYTHONPATH:+:${EXTRA_PYTHONPATH}}
       SILVAENGINE_CACHE_TTL: ${SILVAENGINE_CACHE_TTL:-300}
     volumes:
       - type: bind
@@ -20,6 +20,19 @@ services:
         read_only: true
         bind:
           create_host_path: false
+      # Optional add-on module repos (e.g. RFQ migration E2E). Point
+      # EXTRA_MODULES_DIR at any host directory of module checkouts and
+      # append one "/app/extra_modules/<repo>" entry per repo to
+      # EXTRA_PYTHONPATH (colon-separated, N entries supported). Example in
+      # .env:
+      #   EXTRA_MODULES_DIR=C:/Users/bibo7/gitrepo/silvaengine
+      #   EXTRA_PYTHONPATH=/app/extra_modules/rfq_engine
+      # Unset defaults to re-mounting BANYAN_MODULES_DIR read-only at the
+      # target, which nothing imports without an EXTRA_PYTHONPATH entry.
+      - type: bind
+        source: ${EXTRA_MODULES_DIR:-${BANYAN_MODULES_DIR}}
+        target: /app/extra_modules
+        read_only: true
 
 secrets:
   github_ssh_key:

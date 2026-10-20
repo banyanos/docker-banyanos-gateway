@@ -121,8 +121,12 @@ services:
       - POSTGRES_USER=${POSTGRES_USER:?set POSTGRES_USER in .env}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       - POSTGRES_DB=${POSTGRES_DB:?set POSTGRES_DB in .env}
+    # Mount where the image's declared VOLUME lives (/var/lib/postgresql/data).
+    # Mounting only the parent dir lets the image's anonymous VOLUME shadow
+    # the named one at the real data path, wiping pg data on every container
+    # recreate (down/up). Mounting the data path keeps data across recreates.
     volumes:
-      - gateway-pg-data:/var/lib/postgresql
+      - gateway-pg-data:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -q"]

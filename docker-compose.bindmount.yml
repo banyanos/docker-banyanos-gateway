@@ -1,4 +1,4 @@
-# SilvaEngine packages are pip-installed in the image; only Banyanos source is mounted.
+# Platform modules install from main; SILVAENGINE_SRC optionally overrides them locally.
 services:
   gateway:
     # This tag is built locally, not downloaded from a container registry.
@@ -11,9 +11,17 @@ services:
       secrets:
         - github_ssh_key
     environment:
-      PYTHONPATH: /app/modules/agent_engine:/app/modules/capability_engine:/app/modules/knowledge_engine:/app/modules/llm_engine:/app/modules/memory_engine:/app/modules/merchant_engine:/app/modules/monitor_engine:/app/modules/orchestration_engine:/app/modules/perm_engine:/app/modules/prompt_engine:/app/modules/setting_engine:/app/modules/user_engine:/app/modules/llm_provider_base:/app/modules/llm_provider_anthropic:/app/modules/llm_provider_openai:/app/modules/llm_provider_openai_chat:/app/modules/llm_provider_gemini:/app/modules/llm_provider_ollama${EXTRA_PYTHONPATH:+:${EXTRA_PYTHONPATH}}
+      PYTHONPATH: ${SILVAENGINE_SRC:+/app/src/silvaengine_constants:/app/src/silvaengine_utility:/app/src/silvaengine_dynamodb_base:/app/src/silvaengine_definitions:/app/src/silvaengine_connections:/app/src/silvaengine_base:/app/src/mcp_http_client:/app/src/silvaengine_daemon:/app/src/mcp_protocol_plugin:/app/src/silvaengine_gateway:}/app/modules/agent_engine:/app/modules/capability_engine:/app/modules/knowledge_engine:/app/modules/llm_engine:/app/modules/memory_engine:/app/modules/merchant_engine:/app/modules/monitor_engine:/app/modules/orchestration_engine:/app/modules/perm_engine:/app/modules/prompt_engine:/app/modules/setting_engine:/app/modules/user_engine:/app/modules/llm_provider_base:/app/modules/llm_provider_anthropic:/app/modules/llm_provider_openai:/app/modules/llm_provider_openai_chat:/app/modules/llm_provider_gemini:/app/modules/llm_provider_ollama${EXTRA_PYTHONPATH:+:${EXTRA_PYTHONPATH}}
       SILVAENGINE_CACHE_TTL: ${SILVAENGINE_CACHE_TTL:-300}
     volumes:
+      # Framework source workspace, matching the A2A layout. SILVAENGINE_SRC
+      # enables framework PYTHONPATH entries; otherwise installed main packages win.
+      - type: bind
+        source: ${SILVAENGINE_SRC:-./www/projects}
+        target: /app/src
+        read_only: true
+        bind:
+          create_host_path: false
       - type: bind
         source: ${BANYAN_MODULES_DIR:?set BANYAN_MODULES_DIR in .env}
         target: /app/modules
@@ -27,10 +35,10 @@ services:
       # .env:
       #   EXTRA_MODULES_DIR=C:/Users/bibo7/gitrepo/silvaengine
       #   EXTRA_PYTHONPATH=/app/extra_modules/rfq_engine
-      # Unset defaults to re-mounting BANYAN_MODULES_DIR read-only at the
-      # target, which nothing imports without an EXTRA_PYTHONPATH entry.
+      # Defaults to the shared www/projects workspace. Select addon packages
+      # explicitly through EXTRA_PYTHONPATH.
       - type: bind
-        source: ${EXTRA_MODULES_DIR:-${BANYAN_MODULES_DIR}}
+        source: ${EXTRA_MODULES_DIR:-./www/projects}
         target: /app/extra_modules
         read_only: true
 

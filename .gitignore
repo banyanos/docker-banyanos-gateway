@@ -30,3 +30,10 @@ __pycache__/
 env/*.local.json
 env/*.example.json
 /.ssh/
+
+# Local source workspace — keep directory markers, ignore cloned repositories.
+www/*
+!www/.gitkeep
+!www/projects/
+www/projects/*
+!www/projects/.gitkeep

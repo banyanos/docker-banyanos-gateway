@@ -1,324 +1,340 @@
-# docker-banyanos-gateway — Banyan 生产数据面部署（P0）
+# docker-banyanos-gateway
 
-> 默认运行网关 + postgres + neo4j + redis，配置直接读取
-> `env/se-configdata.local.json`。`db_backend` 独立选择业务数据存储。
-> 容器级操作（compose up、镜像构建）由使用者执行——本仓交付物为配置与脚本。
+本项目部署 Banyanos 网关及其 PostgreSQL、Neo4j 和 Redis 服务。网关从
+`env/se-configdata.local.json` 加载配置，并在同一进程内将请求分发给十二个
+Banyanos 引擎。
 
-## 1. 架构
+平台依赖包默认从 `requirements-silvaengine.txt` 所列仓库的 **main** 分支安装。
+本地开发时，可设置 `SILVAENGINE_SRC`，优先使用本地框架源码。
+两种模式都使用 `docker compose up -d` 启动。
 
+## 1. 系统架构
+
+```text
+浏览器／前端
+    | /beta/core/banyan/<engine>_engine_graphql
+    v
+网关 — FastAPI / Uvicorn，容器端口 8000
+    |-- 路径规范化：支持带 stage/area/endpoint 前缀的请求路径
+    |-- Banyan 鉴权桥：通过 perm_engine 检查访问权限
+    |-- 网关 JWT 中间件：保护 /me 等网关接口
+    |-- 十二个 Banyanos 引擎：在进程内执行 dispatch_graphql
+    |-- PostgreSQL：业务、审计和遥测数据
+    |-- Neo4j：图数据和向量数据
+    |-- Redis：临时令牌、验证码及可选的流式事件
+    `-- JSON 配置：启动时加载，以只读方式挂载
 ```
-浏览器/前端
-    │  /beta/core/banyan/{function}（API-GW 路径契约）
-    ▼
-gateway (FastAPI, uvicorn :8000)
-    ├─ BanyanPathNormalizer   剥 /{stage}/{area} 前缀 → 双契约并存
-    ├─ BanyanAuthorizerBridge perm_engine.PermAuthorizer 真实鉴权（401/403）
-    ├─ FlexJWTMiddleware      非 Banyan 域（本网关自有 /auth 等）走 local/Cognito
-    └─ 路由分发 → 12 引擎进程内 dispatch_graphql
-         │
-         ├─ postgres:16  关系型/审计/遥测（三池：postgres_main/audit/telemetry）
-         ├─ neo4j:5      图数据 + 向量（唯一存储，铁律二）
-         ├─ redis:7      瞬态令牌/验证码
-         └─ env/se-configdata.local.json（启动时只读）
-                └─ 跨引擎互调：httpx 池回环（BANYAN_LOOPBACK_BASE_URL）
-                   引擎服务令牌经鉴权桥验证——与前端调用同一路径，无内部旁路
-```
 
-## 2. 前置条件与 .env
+引擎之间的 HTTP 调用通过 `BANYAN_LOOPBACK_BASE_URL` 回到本网关，
+携带引擎服务令牌，并经过同一鉴权桥验证。
 
-镜像：`GATEWAY_IMAGE` 必须是含 12 引擎 + 框架的扩展镜像（P1 由
-`docker-silvaengine-gateway` 仓构建；PYTHONPATH 布局
-`/app/modules/<12 引擎仓根>`（SilvaEngine 包由 pip 安装到 site-packages），与 api-runtime 已验证形态一致）。
+## 2. 前置条件与环境配置
 
-默认配置来源是 JSON，无需 se-configdata 数据库。业务数据使用
-`db_backend=postgresql` 或 `db_backend=dynamodb`；后者需要有效 AWS 配置。
-完整模板见 `.env.example`，源码挂载与本地构建见 §7。
+安装 Docker 及 Compose v2 插件，并准备以下内容：
 
-在本项目根目录下创建 `.env`（不要提交）：
+- 本仓库及 Banyanos 引擎、模型提供方插件的源码仓库。
+- 对平台私有仓库具有读取权限的 GitHub SSH 密钥。
+- 包含部署参数及基础设施凭据的 `.env` 文件。
+- 已填入实际配置值的 `env/se-configdata.local.json` 文件，其中使用 Docker 服务地址。
+
+将 `.env.example` 复制为 `.env` 并替换占位值，或按照第 8 节使用
+`deploy.sh` 生成环境配置和 JSON 配置。两个文件均包含敏感信息，请勿提交。
+
+主要构建参数如下：
 
 ```dotenv
-# --- 网关镜像 ---
 GATEWAY_IMAGE=banyanos-gateway:local
 SETTING_SOURCE=json
 db_backend=postgresql
+BANYAN_MODULES_DIR=..
+SSH_PRIVATE_KEY_FILE=./.ssh/id_ed25519
+PIP_INDEX_URL=https://pypi.org/simple/
+DOCKER_MIRROR_PREFIX=docker.io/library/
 
-# --- AWS（仅使用 AWS 功能时需要真实凭据）---
-region_name=us-west-2
-aws_access_key_id=<AWS_KEY_WITH_DDB_READ>
-aws_secret_access_key=<AWS_SECRET>
-
-# --- 数据面基础设施（与 se-configdata 记录值保持一致）---
-POSTGRES_USER=banyan
-POSTGRES_PASSWORD=<PG_PASSWORD>
-POSTGRES_DB=banyan
-NEO4J_AUTH=neo4j/<NEO4J_PASSWORD>
-REDIS_PASSWORD=<REDIS_PASSWORD>
-
-# --- 可选覆盖（默认见 docker-compose.yml environment 段）---
-# ENDPOINT_ID=banyan
-# ADAPTER_STAGE=beta
-# ADAPTER_AREA=core
-# BANYAN_LOOPBACK_BASE_URL=http://127.0.0.1:8000/beta/core/banyan
+# 可选：优先使用本地框架源码。
+# 默认使用镜像内安装的平台依赖包，保持下面这一行被注释即可。
+# SILVAENGINE_SRC=./www/projects
 ```
 
-## 3. 启动
+`BANYAN_MODULES_DIR` 指向包含引擎仓库和 `llm_provider_*` 仓库的目录。
+相对路径以本项目目录为基准。默认的本地目录结构如下：
+
+```text
+gitrepo/
+    banyanos/
+        docker-banyanos-gateway/
+            www/
+                projects/        # 框架和附加模块的默认源码工作区
+        agent_engine/
+        user_engine/
+        ...
+    silvaengine/                  # 仅本地框架开发时需要
+        silvaengine_gateway/
+        silvaengine_utility/
+        ...
+```
+
+`db_backend` 独立选择业务数据存储，不影响 JSON 配置的加载方式。
+使用随项目部署的 PostgreSQL 时，设置为 `postgresql`。
+使用 AWS DynamoDB 时，需要有效的 AWS 凭据。
+可选的 `docker-compose.ddb.yml` 用于启动存储业务数据的 DynamoDB Local，
+不会初始化配置数据库。
+
+宿主机端口可通过 `GATEWAY_HOST_PORT`、`POSTGRES_HOST_PORT`、
+`REDIS_HOST_PORT`、`NEO4J_HTTP_HOST_PORT`、`NEO4J_BOLT_HOST_PORT` 和
+`DYNAMODB_HOST_PORT` 配置，默认分别为 8000、5432、6379、7474、7687 和 8001。
+容器端口及服务间调用地址保持不变。
+
+## 3. 启动服务
 
 ```bash
-cd docker-banyanos-gateway
 docker compose up -d
-docker compose ps          # 等 gateway healthy
+docker compose ps
+docker compose logs -f gateway
+```
+
+等待四个服务全部通过健康检查后，检查网关接口：
+
+```bash
+# 如果设置了 GATEWAY_HOST_PORT，请将 8000 替换为对应端口。
 curl http://127.0.0.1:8000/health
 ```
 
-启动日志应出现：`JSON setting loaded:`
-与 `Pool bootstrap: framework pools created`——两者缺失说明
-配置叠加或池引导未生效，先排查再继续。
+直接执行 `docker compose up -d` 会自动加载 `docker-compose.yml` 和
+`docker-compose.override.yml`。后者引用 `docker-compose.bindmount.yml`
+中的网关服务配置。
 
-## 4. se-configdata 记录
+| 文件 | 用途 | 普通启动命令是否加载 |
+| --- | --- | --- |
+| `docker-compose.yml` | 网关、数据库、缓存、端口及持久化数据卷 | 是 |
+| `docker-compose.override.yml` | 将网关连接到镜像构建及源码挂载配置 | 是 |
+| `docker-compose.bindmount.yml` | 镜像构建、Banyanos 源码挂载及可选的框架源码 | 由覆盖文件引用 |
+| `docker-compose.ddb.yml` | 可选的 DynamoDB Local 服务 | 仅显式指定时加载 |
 
-`env/se-configdata.example.json` 是**占位模板**（无真实密钥），记录形态：
-JSON 根对象为 `{variable: value}`；`plugins` 为列表，
-池配置位于 `plugins[0]["config"][<pool>]["settings"]`。
+启动日志应包含以下原始日志文本：`JSON setting loaded:`、
+`Pool bootstrap: framework pools created` 和 `Application startup complete`。
+即使 `/health` 返回成功，也应检查日志；部分可选路由加载失败时，进程仍可能
+通过健康检查。
 
-权威变量集合是 staging 真实记录——用
-`banyan/scripts/probe_seconfig.py`（AWS profile `ideabosque-dev`）核对后再
-填充/裁剪模板；`httpx_*` 池的 `base_url` 会被 `BANYAN_LOOPBACK_BASE_URL`
-启动时统一改写为回环地址，无需在记录里预改。
+## 4. JSON 配置与身份认证
 
-配置直接从 JSON 加载，不需要灌表。含真实密钥的文件严禁提交任何仓库。
+`env/se-configdata.example.json` 是占位模板。启动前，请将实际部署参数填入
+`env/se-configdata.local.json`。配置根对象是变量名到变量值的映射，
+连接池配置位于 `plugins[0]["config"][<pool>]["settings"]`。
 
-Agent 逐字流式（LLM Provider Plugin P3）需要变量 `llm_stream_redis`
-（llm_engine 写 `llm:stream:{id}`、agent_engine 读；`host` / `port` / `db` /
-`username` / `password` / `maxlen` / `ttl_seconds`，可与 `email_code_redis`
-指向同一 Redis）。缺省时对话退化为调用级事件（started → completed），
-回答内容不变。
+使用 `postgres:5432`、`redis:6379` 和 `neo4j:7687` 等 Docker 服务地址。
+基础设施密码必须与 `.env` 保持一致。无效配置、空配置或未替换的占位值
+会导致校验失败。修改 JSON 后应重启网关，无需配置数据库或初始化服务。
 
-Local GraphQL subscription delivery requires `silvaengine_utility` commit
-`b7f000d18c2e68959e7342290f3965aac2f090f8` from `main` (pinned in
-`requirements-silvaengine.txt`). The gateway registers its in-process
-ConnectionManager through that revision's public hook. Browser connections use
-`ws://127.0.0.1:<GATEWAY_HOST_PORT>/banyan/banyan_ws`; the frontend derives
-`part_id` from the signed-in user's tenant, falling back to the deployment
-partition for platform users. `Show reasoning` requests model-provided
-reasoning events separately from answer chunks. It controls event visibility;
-the model may still compute reasoning when the switch is off.
+需要与预发布环境核对配置时，可使用现有的 `banyan/scripts/probe_seconfig.py`
+流程及对应的 AWS 配置档案。启动时，网关通过 `BANYAN_LOOPBACK_BASE_URL`
+改写已配置的 HTTP 连接池基础地址；使用绝对地址调用外部大模型的请求不受影响。
 
-### 4.1 首个平台管理员与权限资源（新库必做）
+默认的模块认证模式将 `/auth/token` 登录请求交给 `user_engine` 处理。
+网关本地账号和 Cognito 是另外两种受支持的认证模式。
+不设置 `JWT_SECRET_KEY` 时，网关使用 JSON 配置中的共享 JWT 密钥。
 
-新库没有管理员，API 也不允许非超管分配预置角色 `platform:super_admin`；
-菜单/页面/按钮权限资源只由 `registerResources` 注册——未执行时前端各页显示
-「無存取權限」。网关首次启动（perm_engine 建好预置角色）后执行一次：
+### 4.1 首个管理员与权限资源
 
-1. 经前端或 `registerUser` 注册管理员账号；
-2. 执行（幂等）：
+新数据库需要创建管理员并注册权限资源。先通过前端或 `registerUser` 注册用户，
+再使用现有初始化脚本激活该用户、分配 `platform:super_admin` 角色并注册资源：
 
 ```bash
-BANYAN_ADMIN_PASSWORD=... SE_CONFIGDATA_DATABASE_URL=... python scripts/bootstrap_platform_admin.py --email admin@example.com     --gateway-url http://127.0.0.1:8000/beta/core/banyan --part-id <tenant>
+BANYAN_ADMIN_PASSWORD=... SE_CONFIGDATA_DATABASE_URL=... \
+  python scripts/bootstrap_platform_admin.py \
+  --email admin@example.com \
+  --gateway-url http://127.0.0.1:8000/beta/core/banyan \
+  --part-id <tenant>
 ```
 
-脚本激活该用户、直写分配 `platform:super_admin`、以其身份登录并调用
-`registerResources`。密码仅经环境变量传入，不打印。
+通过环境变量传入密码，并根据实际部署修改网关地址和租户标识。
+该初始化操作可重复执行。
 
-## 5. P0 验收步骤（使用者执行）
+### 4.2 流式输出配置
 
-1. `docker compose ps` 全部 healthy；`curl /health` 200。
-2. 前端契约：`POST http://127.0.0.1:8000/beta/core/banyan/user_engine_graphql`
-   （`part_id` 头 + Banyan JWT）登录 mutation 返回 token。
-3. 鉴权负向：错误 token → 401；有效 token 但无角色权限 → 403。
-4. 回环链路：触发一次跨引擎调用（如 invokeAgent → httpx_agent 池），网关
-   日志可见同一请求二次进入鉴权桥（服务令牌）且业务结果正常。
-5. x-api-key 护栏：带 `x-api-key` 头调用一次，debug 日志出现
-   `x-api-key present: True`（P0 仅记录存在性，不校验）。
-6. 12 引擎 pytest（banyan 仓，引擎侧零改动回归）。
+逐令牌流式输出需要为大模型事件生产端和智能体消费端配置 `llm_stream_redis`。
+未配置时，对话退化为调用级事件。请按实际需求设置主机、端口、数据库、
+认证信息、保留期限及事件流长度。
 
-## 6. P0 已知边界
+本地 GraphQL 订阅推送依赖 `silvaengine_utility` 在提交
+`b7f000d18c2e68959e7342290f3965aac2f090f8` 中引入的 ConnectionManager 钩子。
+WebSocket 地址为 `ws://127.0.0.1:<GATEWAY_HOST_PORT>/banyan/banyan_ws`。
+前端从已登录用户所属的租户获取 `part_id`；平台用户使用部署分区作为后备值。
+推理过程显示开关只控制展示哪些模型事件，不控制模型是否进行推理计算。
 
-- **x-api-key**：透传不校验（Lambda 链由 API-GW usage plan 强制），存在性
-  日志护栏已加；校验归 P1 评审。
-- **WebSocket**：鉴权桥为 BaseHTTPMiddleware，WS 升级请求不经其拦截
-  （Starlette 行为）；WS 路由的鉴权策略归 P1 评审。
-- **nginx/TLS/前端反代**：P1；**任务/限流共享后端**（多 worker）：P2。
-- 单进程部署（uvicorn 单 worker，ConnectionManager MVP 约束）；多 worker
-  前置依赖 P2 的任务/限流后端改造。
-- staging se-configdata 的真实记录值（尤其 `httpx_llm` 等池形态）以
-  probe 实测为准；发现与模板不一致时以记录为准修模板。
+## 5. 验证步骤
 
-## 7. Pip-installed SilvaEngine + local Banyanos source
+重新构建镜像或修改源码配置后，执行以下检查：
 
-The overlay builds a Python 3.12 image. Pip installs the gateway, six shared
-SilvaEngine framework packages, and the MCP daemon/plugin/client from the
-private GitHub repositories in `requirements-silvaengine.txt`. Third-party
-dependencies come from `requirements-bindmount.txt`. Only the 12 Banyanos
-engines are mounted from local source at `/app/modules`.
+1. 确认四个服务全部通过健康检查，且 `/health` 返回 HTTP 200。
+2. 确认第 3 节列出的启动日志存在，并检查错误和警告。
+3. 验证已配置的模块认证登录流程。
+4. 确认无效令牌返回 401，无所需权限的调用者按路由授权规则被拒绝。
+5. 执行一个有代表性的跨引擎请求，检查其回环调用链路。
+6. 在 Banyanos 工作区运行现有的引擎回归测试。
 
-### 7.1 SSH key and environment
+`/me` 和 `/openapi.json` 均需要身份认证。未认证访问 OpenAPI 返回 401 属于
+预期行为。HTTP OpenAPI 描述中不会列出 WebSocket 路由。
 
-Place a GitHub SSH private key with read access to **every** repository listed
-in `requirements-silvaengine.txt` at `.ssh/id_ed25519` in this directory.
-Add its public key to the appropriate GitHub account or repository deploy-key
-configuration. On Linux/macOS:
+部署验证报告存放在 `docs/test_results/`，其中包括已执行的本地源码模式、
+镜像内 main 分支依赖包模式等检查，以及各项验证的范围和限制。
+
+## 6. 当前限制
+
+- 网关路由清单可能引用本部署未安装的可选引擎。对应路由会被跳过，启动钩子
+  也可能产生警告。使用这些可选接口前，应检查日志并配置实际需要的模块。
+- 当前 x-api-key 检查只记录请求头是否存在，不校验密钥本身。
+  Lambda 部署依赖 API Gateway 使用计划执行限制。
+- HTTP 鉴权桥不覆盖 WebSocket 升级请求，WebSocket 路由使用独立的认证配置。
+- 当前部署使用单个 Uvicorn 工作进程。使用多个工作进程前，需要评估任务、
+  限流、连接及事件分发状态的共享方式。
+- TLS、前端反向代理配置以及更完整的业务集成验证，需要单独实施。
+
+## 7. 平台依赖包与本地开发
+
+### 7.1 镜像构建与平台依赖
+
+镜像先安装 `requirements-bindmount.txt` 中的第三方依赖，再使用 `--no-deps`
+安装 `requirements-silvaengine.txt` 中的十个平台依赖包。
+所有平台仓库地址均指向 **main** 分支，不再固定提交 SHA，也无需执行版本更新脚本。
+
+将 GitHub 私钥放在 `.ssh/id_ed25519`，或通过 `SSH_PRIVATE_KEY_FILE`
+指定其位置。BuildKit 仅在安装依赖时临时提供该密钥，不会将其复制进镜像或
+挂载到运行中的服务。Linux/macOS 上建议将 `.ssh` 权限设为 700，私钥权限设为 600。
 
 ```bash
-mkdir -p .ssh
-# Put your private key at .ssh/id_ed25519, then:
-chmod 700 .ssh
-chmod 600 .ssh/id_ed25519
+docker compose build gateway
+docker compose up -d
 ```
 
-The key is ignored by Git, excluded from the Docker build context, and passed
-as a BuildKit secret only during installation. It is never copied into the
-image or mounted in the running gateway. The build needs GitHub SSH access
-(port 22) and access to the pip index. SSH host checking uses a known_hosts
-file populated by ssh-keyscan during the build.
+即使 Git 分支已有更新，Docker 仍可能复用已缓存的依赖层。
+需要明确获取当前 main 分支版本时，执行：
 
-Add to the environment from section 2:
+```bash
+docker compose build --no-cache gateway
+docker compose up -d gateway
+```
+
+重启容器不会执行 pip，也不会刷新已安装的依赖包。
+修改依赖、Dockerfile 或复制进镜像的部署脚本后，需要重新构建镜像。
+
+### 7.2 SILVAENGINE_SRC 如何选择框架代码
+
+同一条 Compose 启动命令支持以下两种模式：
+
+| `SILVAENGINE_SRC` 的值 | 实际使用的框架代码 | 挂载到 `/app/src` 的内容 |
+| --- | --- | --- |
+| 未设置或为空 | 镜像内从 main 分支安装的依赖包 | 默认工作区 `./www/projects`，不添加框架导入路径 |
+| 非空目录路径 | 通过 PYTHONPATH 优先使用本地仓库 | 指定的宿主机目录，只读挂载 |
+
+两种模式都会通过 `BANYAN_MODULES_DIR` 将 Banyanos 引擎和模型提供方插件
+挂载到 `/app/modules`。启用本地开发后，镜像中已安装的平台依赖包仍然保留。
+
+参照 `docker-a2a-gateway`，统一使用 `www/projects` 作为默认源码工作区，
+并通过两个只读挂载区分框架和附加模块：
+
+| 环境变量 | 默认宿主机目录 | 容器挂载路径 | 导入方式 |
+| --- | --- | --- | --- |
+| `SILVAENGINE_SRC` | `./www/projects` | `/app/src` | 设置非空变量后，自动添加十个平台仓库的 PYTHONPATH 路径 |
+| `EXTRA_MODULES_DIR` | `./www/projects` | `/app/extra_modules` | 通过 `EXTRA_PYTHONPATH` 指定需要启用的附加仓库 |
+
+未设置变量时，这两个路径都挂载默认工作区。设置 `SILVAENGINE_SRC` 前，
+框架仍使用镜像内安装的 main 分支依赖包；没有 `EXTRA_PYTHONPATH` 条目的
+附加模块也不会因此自动启用。两个变量可分别指向不同的宿主机目录。
+Compose 仍会创建挂载，但不再需要单独的空占位目录。
+
+`www` 和 `www/projects` 的目录标记文件纳入版本管理，克隆进去的本地仓库
+由 `.gitignore` 排除，不会随本项目提交。
+
+### 7.3 启用或关闭本地框架开发
+
+启用本地源码时，可将框架仓库克隆到 `www/projects`，然后设置：
 
 ```dotenv
-GATEWAY_IMAGE=banyanos-gateway:local
-BANYAN_MODULES_DIR=C:/Users/bibo7/gitrepo/banyanos
-SSH_PRIVATE_KEY_FILE=./.ssh/id_ed25519
-# Alternatively point SSH_PRIVATE_KEY_FILE at an existing private key.
-PIP_INDEX_URL=https://pypi.org/simple/
-# SILVAENGINE_CACHE_TTL=300
+SILVAENGINE_SRC=./www/projects
 ```
 
-Existing gateway/framework/vendor/MCP path variables can be removed; the
-overlay and deploy script no longer use them. Keep existing passwords and
-seed configuration when migrating.
-
-### 7.2 Build and start
+如果框架仓库已经位于其他目录，也可以直接指定该父目录：
 
 ```dotenv
-SETTING_SOURCE=json
-db_backend=postgresql
+SILVAENGINE_SRC=C:/Users/bibo7/gitrepo/silvaengine
 ```
 
-Configuration is mounted read-only from `env/se-configdata.local.json`. Use real
-values and Docker service endpoints (`postgres:5432`, `redis:6379`, `neo4j:7687`)
-in that file. Invalid, empty, or placeholder configuration fails at startup.
-Restart the gateway after editing JSON. Existing JSON and credentials are preserved.
-Remove `COMPOSE_PROFILES`, `COMPOSE_FILE`, `COMPOSE_PATH_SEPARATOR`, and
-`SE_CONFIGDATA_BACKEND` if migrating from the intermediate backend-selector setup.
-The deployment factory `scripts.gateway_app:create_app_from_env` loads JSON before
-initializing the gateway and passes the settings to its existing `create_app` function.
-Installed SilvaEngine packages are unmodified; no build-time patches are applied.
-The factory uses setting-builder helpers from the pinned gateway version; validate
-this integration when upgrading that pin.
+该目录应包含 `silvaengine_constants`、`silvaengine_utility`、
+`silvaengine_dynamodb_base`、`silvaengine_definitions`、`silvaengine_connections`、
+`silvaengine_base`、`mcp_http_client`、`silvaengine_daemon`、`mcp_protocol_plugin`
+和 `silvaengine_gateway`。
 
-Published host ports are configurable in `.env`: `GATEWAY_HOST_PORT` (8000),
-`POSTGRES_HOST_PORT` (5432), `REDIS_HOST_PORT` (6379),
-`NEO4J_HTTP_HOST_PORT` (7474), `NEO4J_BOLT_HOST_PORT` (7687), and
-`DYNAMODB_HOST_PORT` (8001). Recreate the affected services with Compose
-after changing them. Container ports and internal service URLs stay unchanged;
-host clients must use the configured host ports. DynamoDB remains bound to
-127.0.0.1. `deploy.sh` uses these values for its port checks and printed URLs.
-
-`docker compose up -d` automatically loads `docker-compose.override.yml`,
-which reuses the source overlay's build settings and Banyanos source mount.
-The source overlay sets `pull_policy: build` so Compose builds the gateway
-instead of trying to pull `banyanos-gateway:local` from a registry.
-The explicit commands below select the same configuration. For a prebuilt
-image without the source overlay, use `docker compose -f docker-compose.yml up -d`.
+使用普通启动命令应用设置：
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.bindmount.yml build gateway
-docker compose -f docker-compose.yml -f docker-compose.bindmount.yml up -d
-docker compose -f docker-compose.yml -f docker-compose.bindmount.yml logs -f gateway
+docker compose up -d gateway
 ```
 
-The default setup reads configuration directly from `env/se-configdata.local.json`;
-no configuration database or initializer service is started. Set `db_backend=postgresql`
-or `db_backend=dynamodb` in `.env` to select application data storage independently.
-For DynamoDB application data, configure working AWS credentials; PostgreSQL remains
-the default. An explicit `.env` database choice overrides that field in the JSON.
-`docker-compose.ddb.yml` optionally starts DynamoDB Local for application data;
-it does not seed a configuration table. Configuration always comes from JSON.
-Package installation happens at build time. Container restarts do not run pip.
-Banyanos source changes take effect after `docker compose ... restart gateway`.
-SilvaEngine changes require rebuilding the image. `requirements-silvaengine.txt`
-pins every repository to a commit SHA, so builds are repeatable: a plain
-`bash deploy.sh` or `build gateway` always installs exactly the pinned commits.
+源码目录必须事先存在，Compose 不会自动创建。本地仓库可以包含开发中的修改；
+Compose 不会切换其分支或拉取更新。`requirements-silvaengine.txt` 中的依赖地址
+始终指向 main 分支。
 
-### 7.2.1 Bumping SilvaEngine pins
+附加模块独立配置，例如将 `rfq_engine` 克隆到 `www/projects/rfq_engine` 后：
 
-The trailing `# <branch>` comment on each requirements line is the branch that
-pin tracks (no comment means `main`; pip ignores it). That comment is the
-branch configuration: edit it by hand, or let `--branch` rewrite it.
-`scripts/bump_silvaengine.sh` moves each pin to the head of its tracked branch,
-prints the commits added/removed per repo, and writes nothing if any repo
-cannot be resolved.
+```dotenv
+EXTRA_MODULES_DIR=./www/projects
+EXTRA_PYTHONPATH=/app/extra_modules/rfq_engine
+```
+
+需要恢复为镜像内依赖包时，删除或注释 `SILVAENGINE_SRC`，也可以将其设为空值，
+然后再次执行 `docker compose up -d gateway`。
+同时应清除终端中已导出的同名变量，因为终端环境变量优先于 `.env`。
+
+修改已挂载的 Python 源码或 JSON 配置后，重启网关：
 
 ```bash
-bash scripts/bump_silvaengine.sh --dry-run        # preview
-bash scripts/bump_silvaengine.sh                  # bump on tracked branches
-bash scripts/bump_silvaengine.sh --staging       # switch to staging (main where no staging branch exists)
-bash scripts/bump_silvaengine.sh --dev           # switch to dev (main where no dev branch exists)
-bash scripts/bump_silvaengine.sh --main          # switch back to main
-bash scripts/bump_silvaengine.sh --branch prod   # any other branch name
-bash scripts/bump_silvaengine.sh --only silvaengine_gateway --staging
-bash scripts/bump_silvaengine.sh --build         # bump + build + recreate gateway (cloud DDB compose)
-bash deploy.sh --bump                            # bump to latest main, then deploy with JSON configuration
-bash deploy.sh --bump=staging                    # switch to staging + bump, then deploy
-bash deploy.sh --bump=dev                        # switch to dev + bump, then deploy
+docker compose restart gateway
 ```
 
-`deploy.sh --bump` defaults to `main` and accepts only `main`, `dev` or
-`staging`; any other branch goes through `bump_silvaengine.sh --branch NAME`.
-Running the bump script with no branch option keeps each repo on the branch
-recorded in the requirements file.
+修改源码路径、端口或环境变量后，应执行 `up -d`，让 Compose 重建受影响的
+容器配置。仅执行 `restart` 不会应用这些配置变更。
 
-A changed pin changes the requirements file, which busts the pip layer cache,
-so no `--no-cache` build is needed. Commit the requirements diff after the
-gateway passes its checks; `git revert` + rebuild rolls a bump back. Switch to
-release tags once the repositories publish them.
+如果使用已经包含全部依赖和业务引擎的预构建镜像，可以显式只加载
+`docker-compose.yml`，不加载源码挂载和构建覆盖配置。
 
-### 7.3 Acceptance
+## 8. 部署脚本
 
-Use the acceptance checks in section 5. The base compose alone still supports
-a prebuilt image; that image must supply both the dependencies and Banyanos
-engines if the source overlay is omitted.
+`deploy.sh` 封装了环境检查、配置生成、源码校验、端口检查、镜像构建、
+JSON 校验、服务启动及健康和日志检查。宿主机需要 Docker 和 Compose v2，
+脚本本身不要求安装 Python、jq 或 AWS CLI。
 
-## 8. 一键部署脚本 deploy.sh（JSON 配置）
+### 8.1 准备服务器
 
-`deploy.sh` 把 §2/§4/§7 的手工步骤（`.env` 生成、种子 JSON 渲染、源码树校验、
-端口预检、镜像构建、JSON 校验、四服务 up、健康与关键日志验证）封装为
-幂等一键流程。目标服务器只需预装 Docker（含 Compose v2 插件），无需
-Python / jq / awscli；每阶段有状态输出，失败给出具体原因与排查建议后安全
-退出，修复后直接重跑，整体回滚 `bash deploy.sh down`。
+复制本项目及 Banyanos 引擎、模型提供方插件仓库，设置 `BANYAN_MODULES_DIR`，
+提供用于构建的 GitHub 密钥，并准备 JSON 配置。
+只有启用 `SILVAENGINE_SRC` 时，才需要同步本地框架仓库。
 
-### 8.1 服务器准备（一次性）
+脚本保留已有的 `.env` 和 JSON 文件。两者都不存在时，使用模板及生成的凭据
+创建文件；仅缺少 JSON 时，根据 `.env` 重新渲染；如果 JSON 存在但 `.env`
+缺失，则停止执行，以避免凭据不一致。生成文件的权限为 600，并已从 Git 中排除。
 
-同步本项目与 12 个 Banyanos 引擎目录，设置 `BANYAN_MODULES_DIR` 指向引擎仓根目录。
-SilvaEngine 仓与 vendor 快照无需同步。按 §7.1 放置 GitHub SSH 私钥；
-首次构建需要访问 GitHub 与 pip 索引，配置直接读取 env 目录中的 JSON。
-
-### 8.2 命令
+### 8.2 命令说明
 
 | 命令 | 作用 |
 | --- | --- |
-| `bash deploy.sh` | 部署/更新（幂等，重复执行安全） |
-| `bash deploy.sh status` | 容器状态 + 健康检查 + 关键日志核查 |
-| `bash deploy.sh down` | 停止并清理（数据卷保留） |
-| `bash deploy.sh down -v` | 停止并连数据卷一起删除 |
-| `bash deploy.sh --restart` | 部署后重启 gateway（改源码/种子 JSON 后） |
-| `bash deploy.sh --force-env` | 重新生成 .env 与种子 JSON（密码会变） |
-| `bash deploy.sh --dry-run` | 只跑环境检测/配置生成/校验/端口预检，不起容器 |
-| `bash deploy.sh --self-test` | 内置纯逻辑自检（不碰 docker） |
+| `bash deploy.sh` | 使用现有 Compose 配置构建并部署 |
+| `bash deploy.sh status` | 查看容器健康状态及必需的启动日志 |
+| `bash deploy.sh down` | 停止服务，保留数据卷 |
+| `bash deploy.sh down -v` | 停止服务并删除数据卷 |
+| `bash deploy.sh --restart` | 部署后重启网关 |
+| `bash deploy.sh --force-env` | 重新生成 `.env` 和 JSON，凭据会改变 |
+| `bash deploy.sh --dry-run` | 检查环境、配置和端口，不启动容器 |
+| `bash deploy.sh --self-test` | 运行脚本自检，无需 Docker |
 
-环境变量（首次生成 `.env` 前生效）：`TENANT_PART_ID`（默认 nestaging）、
-`BANYAN_MODULES_DIR`（优先于自动探测）和 `SSH_PRIVATE_KEY_FILE`
-（默认 `./.ssh/id_ed25519`）。`GATEWAY_WAIT_TIMEOUT` 随时可设。
+首次生成环境文件前，可通过 `TENANT_PART_ID`（默认 `nestaging`）、
+`BANYAN_MODULES_DIR` 和 `SSH_PRIVATE_KEY_FILE`（默认 `./.ssh/id_ed25519`）
+覆盖对应参数。`GATEWAY_WAIT_TIMEOUT` 用于调整健康检查等待时间。
+需要本地框架开发时，在 `.env` 中设置 `SILVAENGINE_SRC`。
 
-### 8.3 设计要点
+种子配置渲染器要求其替换的凭据值仅包含字母和数字。脚本生成的 JWT 密钥和
+x-api-key 写入 JSON 文件。请保持 `.env` 与 JSON 中的基础设施凭据一致。
+使用 `--force-env` 或删除配置文件前，应确认其影响范围。
 
-- 密钥自动生成：PG / Neo4j / Redis 密码各 16 位随机，JWT_SECRET 与 x-api-key
-  各 32 位随机（后两者只写入种子 JSON）；`.env` 与种子 JSON 均 600 权限，
-  `.gitignore` 已排除，勿提交。
-- 四态状态机：`.env`/JSON 都在→复用；都无→生成；仅 `.env`→补渲染；
-  仅 JSON（孤儿态）→报错（防密码不一致）。配置值强制纯字母数字（sed
-  渲染防注入），改密码后删 JSON 重跑。
-- 幂等：重复运行保持 `.env`/JSON 内容不变；启动时直接校验和加载 JSON。
-  `--force-env` 为显式重新生成入口。
-- 与 §7 手动路径同一 compose project（目录名 deploy），容器/卷/网络互通。
-- 公网防火墙只放行 8000；8001/5432/6379/7474/7687 仅供本机调试。
-- 12 引擎 pytest 仍在开发机 banyan 仓执行（服务器无 Python）。
+仅向公网开放预期的网关端口。数据库和缓存的宿主机端口用于受控的本地开发访问，
+应根据目标环境检查端口绑定方式及防火墙规则。

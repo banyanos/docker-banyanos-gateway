@@ -1,20 +1,13 @@
-# Shared framework, gateway, and MCP packages installed by pip from private GitHub repos.
-# Pinned to commit SHAs (no release tags yet). The trailing comment on each line is
-# the branch that pin tracks. Utility pin refreshed 2026-10-19; others 2026-10-18.
-# To upgrade: bash scripts/bump_silvaengine.sh (--main|--dev|--staging to switch), then rebuild.
-# Install --no-deps after requirements-bindmount.txt (the explicit runtime dependency set).
-git+ssh://git@github.com/ideabosque/silvaengine_constants.git@207788c563d1db9dd8c7dd425e1afe39d72dae79#egg=silvaengine_constants  # main
-git+ssh://git@github.com/ideabosque/silvaengine_utility.git@b7f000d18c2e68959e7342290f3965aac2f090f8#egg=silvaengine_utility  # main
-git+ssh://git@github.com/ideabosque/silvaengine_dynamodb_base.git@878b8ca8595f751715f0290d4398934c0e96b9a6#egg=silvaengine_dynamodb_base  # main
-git+ssh://git@github.com/ideabosque/silvaengine_definitions.git@c8d03153f0e81f468c67a52dc226bc09c9b58ed9#egg=silvaengine_definitions  # main
-git+ssh://git@github.com/ideabosque/silvaengine_connections.git@6d8d15d7b289be2fc43a10240cc3a2a83f07505e#egg=silvaengine_connections  # main
-git+ssh://git@github.com/ideabosque/silvaengine_base.git@796c60a417648432e1dddc5fe22bc554229362a6#egg=silvaengine_base  # main
-git+ssh://git@github.com/ideabosque/mcp_http_client.git@9e46d9aabc5140db34ed6e27d30ff48b2e8b4363#egg=mcp_http_client  # main
-git+ssh://git@github.com/ideabosque/silvaengine_daemon.git@a0f6267e33fd56f8ded41eac8aad22241a096bd8#egg=silvaengine_daemon  # main
-git+ssh://git@github.com/ideabosque/mcp_protocol_plugin.git@57e932de64931df331bfa022db1ad9d507bbfed3#egg=mcp_protocol_plugin  # main
-git+ssh://git@github.com/ideabosque/silvaengine_gateway.git@8f68d848d9bfc4b2ea93202df0f61cd881c275de#egg=silvaengine_gateway  # main
-# LLM provider plugins (plan §1.2 / D9): the six banyanos/llm_provider_*
-# projects are BanyanOS modules, supplied like the engines through
-# BANYAN_MODULES_DIR + PYTHONPATH (docker-compose.bindmount.yml) and found by
-# llm_engine's llm_provider_* package scan. Their SDKs are pinned in
-# requirements-bindmount.txt.
+# Platform modules installed from main, matching docker-a2a-gateway.
+# Install with --no-deps after requirements-bindmount.txt; private package
+# metadata references other packages unavailable on PyPI. No SHA bumps needed.
+git+ssh://git@github.com/ideabosque/silvaengine_constants.git@main#egg=silvaengine_constants
+git+ssh://git@github.com/ideabosque/silvaengine_utility.git@main#egg=silvaengine_utility
+git+ssh://git@github.com/ideabosque/silvaengine_dynamodb_base.git@main#egg=silvaengine_dynamodb_base
+git+ssh://git@github.com/ideabosque/silvaengine_definitions.git@main#egg=silvaengine_definitions
+git+ssh://git@github.com/ideabosque/silvaengine_connections.git@main#egg=silvaengine_connections
+git+ssh://git@github.com/ideabosque/silvaengine_base.git@main#egg=silvaengine_base
+git+ssh://git@github.com/ideabosque/mcp_http_client.git@main#egg=mcp_http_client
+git+ssh://git@github.com/ideabosque/silvaengine_daemon.git@main#egg=silvaengine_daemon
+git+ssh://git@github.com/ideabosque/mcp_protocol_plugin.git@main#egg=mcp_protocol_plugin
+git+ssh://git@github.com/ideabosque/silvaengine_gateway.git@main#egg=silvaengine_gateway

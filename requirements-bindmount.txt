@@ -9,9 +9,9 @@
 #      pydantic (bundled with fastapi) already covered by ① are not repeated);
 #   ③ MCP increment — see below.
 #
-# Installed by Dockerfile before requirements-silvaengine.txt.
+# Installed by Dockerfile before requirements-silvaengine.txt (platform modules from main).
 # Banyanos engines are supplied by BANYAN_MODULES_DIR; shared SilvaEngine
-# and MCP packages are installed separately by pip --no-deps from GitHub.
+# and MCP packages are installed separately from requirements-silvaengine.txt.
 # =============================================================================
 
 # --- ① Banyan runtime (verbatim from api-runtime requirements.txt) ---
@@ -78,8 +78,8 @@ pyyaml>=6.0
 python-dotenv>=1.0.0
 
 # --- ③ MCP increment (mcp_protocol_plugin, called by capability_engine's loopback) ---
-# mcp_protocol_plugin / silvaengine_daemon / mcp_http_client are pip-installed
-# via requirements-silvaengine.txt; only their PyPI
+# mcp_protocol_plugin / silvaengine_daemon / mcp_http_client are installed
+# from requirements-silvaengine.txt; only their PyPI
 # dependencies not already covered by ①② are added here (checked against pyproject.toml).
 mcp>=2.0,<3.0
 aiohttp>=3.9

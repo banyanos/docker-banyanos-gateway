@@ -1,8 +1,8 @@
-"""Banyanos JSON app factory for the pinned, unmodified SilvaEngine gateway.
+"""Banyanos JSON app factory for the unmodified SilvaEngine gateway.
 
 Keep the gateway's environment manifest, loopback and emergency-override rules.
 Resolve JSON before initializing GatewayConfig or deriving routes/MCP settings.
-The setting-builder helpers used here are covered by the gateway commit pin.
+The gateway main branch must provide these setting-builder helpers.
 """
 
 import json

@@ -7,13 +7,12 @@
 #   dispatched in-process) → postgres / neo4j / redis; se-configdata settings
 #   are read directly from env/se-configdata.local.json at startup.
 #
-# Gateway image requirements (delivered in P1 by the docker-silvaengine-gateway repo):
-#   The image must contain both the gateway and the Banyan runtime —
-#   the silvaengine_gateway package + framework (silvaengine_base /
-#   silvaengine_utility / silvaengine_connections / silvaengine_dynamodb_base)
-#   + the 12 business engines. In the source overlay, SilvaEngine packages
-#   are pip-installed and PYTHONPATH lists /app/modules/<12 engine repo roots>
-#   plus the 6 llm_provider_* plugin roots (LLM provider plan D9).
+# Gateway image requirements:
+#   The default source overlay installs third-party dependencies in the image
+#   plus platform modules from main, and mounts Banyanos engines/provider
+#   plugins at /app/modules/<repo>. Setting SILVAENGINE_SRC optionally mounts
+#   framework source at /app/src/<repo>. Without the overlay, a prebuilt
+#   image must supply all of these packages itself.
 #   Missing any path entry makes that engine's import fail → auth layer
 #   Permission denied → blanket 403 (the same pitfall api-runtime hit;
 #   include everything).

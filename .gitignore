@@ -27,8 +27,7 @@ __pycache__/
 !.dockerignore
 .claude
 
-env/*.local.json
-env/*.example.json
+env/*.json
 /.ssh/
 
 # Local source workspace — keep directory markers, ignore cloned repositories.

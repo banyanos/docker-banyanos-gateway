@@ -26,6 +26,11 @@ def build_setting():
     builder._rewrite_httpx_base_urls(record)
     setting.update(record)
     setting = builder._apply_env_overrides(setting)
+    # Deployment-controlled allowlist for capability_engine's per-call MCP JWT.
+    # Provider rows cannot opt arbitrary remote hosts into local signing.
+    mcp_base_url = os.getenv("CAPABILITY_MCP_GATEWAY_BASE_URL")
+    if mcp_base_url:
+        setting.setdefault("capability_mcp_gateway_base_url", mcp_base_url)
 
     builder.GatewayConfig.initialize(logging.getLogger("silvaengine_gateway"), setting)
     setting["internal_mcp"] = builder._build_internal_mcp_config()

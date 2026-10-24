@@ -86,3 +86,10 @@ class GatewayAppTests(unittest.TestCase):
     def test_factory_passes_settings_to_gateway(self):
         self.assertEqual(create_app_from_env(), "app")
         self.assertEqual(self.app.create_app.call_args.args[0]["jwt_secret"], "json-secret")
+
+    def test_internal_mcp_auth_allowlist_comes_from_deployment(self):
+        os.environ["CAPABILITY_MCP_GATEWAY_BASE_URL"] = "http://127.0.0.1:8000"
+        setting = build_setting()
+        self.assertEqual(
+            setting["capability_mcp_gateway_base_url"], "http://127.0.0.1:8000"
+        )

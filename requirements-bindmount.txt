@@ -96,3 +96,6 @@ openai>=1.40,<2
 tiktoken>=0.7,<1
 google-genai>=2.0,<3
 ollama>=0.4,<1
+
+# MCP processor response normalization.
+pyhumps>=3.8,<4

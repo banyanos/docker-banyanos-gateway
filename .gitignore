@@ -36,3 +36,4 @@ www/*
 !www/projects/
 www/projects/*
 !www/projects/.gitkeep
+git-packages/

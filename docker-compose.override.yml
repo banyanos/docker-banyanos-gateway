@@ -1,6 +1,12 @@
 # Automatically loaded by `docker compose up`; reuse the source overlay.
 services:
   gateway:
+    entrypoint: ["/bin/sh", "/usr/local/bin/gateway-git-entrypoint.sh"]
+    secrets:
+      - github_ssh_key
+    volumes:
+      - ./scripts/gateway-git-entrypoint.sh:/usr/local/bin/gateway-git-entrypoint.sh:ro
+      - ./git-packages:/tmp/packages
     extends:
       file: docker-compose.bindmount.yml
       service: gateway

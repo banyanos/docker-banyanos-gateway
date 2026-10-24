@@ -338,3 +338,17 @@ x-api-key 写入 JSON 文件。请保持 `.env` 与 JSON 中的基础设施凭�
 
 仅向公网开放预期的网关端口。数据库和缓存的宿主机端口用于受控的本地开发访问，
 应根据目标环境检查端口绑定方式及防火墙规则。
+
+### Git MCP installation at runtime
+
+The gateway service mounts `github_ssh_key` read only. Its entrypoint copies the
+key to an ephemeral file with mode 0600 for OpenSSH (including Docker Desktop,
+where secret mounts may report mode 0644). The image's existing GitHub known
+hosts file remains enforced. Only authorized platform administrators can invoke
+the Capability Engine's package-registration API.
+
+Commit-scoped installations persist under `./git-packages`, mounted at
+`/tmp/packages` and excluded from Git. MCP processor response normalization uses
+the `pyhumps` dependency. When enabling hosted MCP execution, the connection
+plugin's JSON bootstrap must define an enabled `httpx_mcp` pool of type `httpx`;
+use the internal gateway as its base URL and supply credentials per request.

@@ -99,3 +99,14 @@ ollama>=0.4,<1
 
 # MCP processor response normalization.
 pyhumps>=3.8,<4
+
+# --- ⑤ A2A increment (a2a_protocol_plugin, A2A protocol routes and agent bridges) ---
+# a2a_protocol_plugin / silvaengine_daemon / silvaengine_utility /
+# silvaengine_dynamodb_base are installed from requirements-silvaengine.txt;
+# only its PyPI dependencies not already covered by ①②④ are added here
+# (checked against a2a_protocol_plugin/pyproject.toml). Same SDK range as
+# docker-a2a-gateway; the a2a_integration_development_plan.md Phase 1 decision
+# pins the tested release. Note: the plugin declares pendulum ^2.1.2 while
+# this file installs pendulum>=3.0; --no-deps tolerates the skew, verify at
+# runtime like the other convergent packages.
+a2a-sdk[http-server]>=1.0.0,<2

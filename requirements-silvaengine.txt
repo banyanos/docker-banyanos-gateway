@@ -10,4 +10,5 @@ git+ssh://git@github.com/ideabosque/silvaengine_base.git@main#egg=silvaengine_ba
 git+ssh://git@github.com/ideabosque/mcp_http_client.git@main#egg=mcp_http_client
 git+ssh://git@github.com/ideabosque/silvaengine_daemon.git@main#egg=silvaengine_daemon
 git+ssh://git@github.com/ideabosque/mcp_protocol_plugin.git@main#egg=mcp_protocol_plugin
+git+ssh://git@github.com/ideabosque/a2a_protocol_plugin.git@main#egg=a2a_protocol_plugin
 git+ssh://git@github.com/ideabosque/silvaengine_gateway.git@main#egg=silvaengine_gateway

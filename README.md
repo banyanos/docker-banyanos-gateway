@@ -195,7 +195,7 @@ WebSocket 地址为 `ws://127.0.0.1:<GATEWAY_HOST_PORT>/banyan/banyan_ws`。
 ### 7.1 镜像构建与平台依赖
 
 镜像先安装 `requirements-bindmount.txt` 中的第三方依赖，再使用 `--no-deps`
-安装 `requirements-silvaengine.txt` 中的十个平台依赖包。
+安装 `requirements-silvaengine.txt` 中的十一个平台依赖包。
 所有平台仓库地址均指向 **main** 分支，不再固定提交 SHA，也无需执行版本更新脚本。
 
 将 GitHub 私钥放在 `.ssh/id_ed25519`，或通过 `SSH_PRIVATE_KEY_FILE`
@@ -235,7 +235,7 @@ docker compose up -d gateway
 
 | 环境变量 | 默认宿主机目录 | 容器挂载路径 | 导入方式 |
 | --- | --- | --- | --- |
-| `SILVAENGINE_SRC` | `./www/projects` | `/app/src` | 设置非空变量后，自动添加十个平台仓库的 PYTHONPATH 路径 |
+| `SILVAENGINE_SRC` | `./www/projects` | `/app/src` | 设置非空变量后，自动添加十一个平台仓库的 PYTHONPATH 路径 |
 | `EXTRA_MODULES_DIR` | `./www/projects` | `/app/extra_modules` | 通过 `EXTRA_PYTHONPATH` 指定需要启用的附加仓库 |
 
 未设置变量时，这两个路径都挂载默认工作区。设置 `SILVAENGINE_SRC` 前，
@@ -262,8 +262,8 @@ SILVAENGINE_SRC=C:/Users/bibo7/gitrepo/silvaengine
 
 该目录应包含 `silvaengine_constants`、`silvaengine_utility`、
 `silvaengine_dynamodb_base`、`silvaengine_definitions`、`silvaengine_connections`、
-`silvaengine_base`、`mcp_http_client`、`silvaengine_daemon`、`mcp_protocol_plugin`
-和 `silvaengine_gateway`。
+`silvaengine_base`、`mcp_http_client`、`silvaengine_daemon`、`mcp_protocol_plugin`、
+`a2a_protocol_plugin` 和 `silvaengine_gateway`。
 
 使用普通启动命令应用设置：
 

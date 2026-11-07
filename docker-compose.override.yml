@@ -2,10 +2,13 @@
 services:
   gateway:
     entrypoint: ["/bin/sh", "/usr/local/bin/gateway-git-entrypoint.sh"]
+    environment:
+      MCP_GIT_SSH_KEY_FILE: /run/secrets/github_ssh_key
     secrets:
       - github_ssh_key
     volumes:
       - ./scripts/gateway-git-entrypoint.sh:/usr/local/bin/gateway-git-entrypoint.sh:ro
+      - ./scripts/gateway_app.py:/app/scripts/gateway_app.py:ro
       - ./git-packages:/tmp/packages
     extends:
       file: docker-compose.bindmount.yml

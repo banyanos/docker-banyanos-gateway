@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import sys
+from pathlib import Path
 
 from .json_settings import load_json_settings
 
@@ -26,6 +27,13 @@ def build_setting():
     builder._rewrite_httpx_base_urls(record)
     setting.update(record)
     setting = builder._apply_env_overrides(setting)
+    git_key_file = os.getenv("MCP_GIT_SSH_KEY_FILE")
+    if git_key_file:
+        # Runtime-only Docker secret; never write private material to JSON/env.
+        key = Path(git_key_file).read_text(encoding="utf-8").strip()
+        if not key or "PRIVATE KEY-----" not in key:
+            raise ValueError("MCP Git SSH secret is not a private key")
+        setting["git_ssh_key"] = key + "\n"
     # Deployment-controlled allowlist for capability_engine's per-call MCP JWT.
     # Provider rows cannot opt arbitrary remote hosts into local signing.
     mcp_base_url = os.getenv("CAPABILITY_MCP_GATEWAY_BASE_URL")

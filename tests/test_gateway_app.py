@@ -64,6 +64,14 @@ class GatewayAppTests(unittest.TestCase):
             self.assertEqual(setting["functs_on_local"][name]["class_name"], "ExampleEngine")
         self.builder._rewrite_httpx_base_urls.assert_called_once()
 
+    def test_runtime_git_key_is_loaded_only_from_secret_file(self):
+        key = self.path.parent / "git-key"
+        key.write_text("-----BEGIN OPENSSH PRIVATE KEY-----\nfixture\n-----END OPENSSH PRIVATE KEY-----\n")
+        os.environ["MCP_GIT_SSH_KEY_FILE"] = str(key)
+        setting = build_setting()
+        self.assertEqual(setting["git_ssh_key"], key.read_text())
+        self.assertNotIn("git_ssh_key", json.loads(self.path.read_text()))
+
     def test_emergency_overrides_and_local_dispatch_override(self):
         self.builder._apply_env_overrides = lambda setting: {**setting, "custom": "override"}
         os.environ["FUNCTS_ON_LOCAL_OVERRIDES"] = '{"query": {"module_name": "override"}}'

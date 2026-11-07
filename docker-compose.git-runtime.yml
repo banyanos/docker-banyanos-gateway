@@ -1,0 +1,18 @@
+# Optional runtime Git access for administrator-controlled MCP installations.
+# MCP_GIT_SSH_KEY_PATH points to an existing protected host key file.
+services:
+  gateway:
+    environment:
+      MCP_GIT_SSH_KEY_FILE: /run/secrets/mcp_git_ssh_key
+    secrets:
+      - mcp_git_ssh_key
+    volumes:
+      - type: bind
+        source: ./scripts/gateway_app.py
+        target: /app/scripts/gateway_app.py
+        read_only: true
+        bind:
+          create_host_path: false
+secrets:
+  mcp_git_ssh_key:
+    file: ${MCP_GIT_SSH_KEY_PATH:?set MCP_GIT_SSH_KEY_PATH to the protected Git SSH key}

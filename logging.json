@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "disable_existing_loggers": false,
+  "formatters": {
+    "standard": {"format": "%(asctime)s %(levelname)s %(name)s %(message)s"}
+  },
+  "handlers": {
+    "console": {
+      "class": "logging.StreamHandler",
+      "stream": "ext://sys.stdout",
+      "formatter": "standard"
+    },
+    "persistent": {
+      "class": "logging.handlers.RotatingFileHandler",
+      "filename": "/var/log/supervisor/banyanos-gateway.log",
+      "maxBytes": 52428800,
+      "backupCount": 10,
+      "encoding": "utf-8",
+      "formatter": "standard"
+    }
+  },
+  "root": {"level": "INFO", "handlers": ["console", "persistent"]},
+  "loggers": {
+    "uvicorn": {"level": "INFO", "handlers": [], "propagate": true},
+    "uvicorn.error": {"level": "INFO", "handlers": [], "propagate": true},
+    "uvicorn.access": {"level": "INFO", "handlers": [], "propagate": true}
+  }
+}

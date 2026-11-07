@@ -4,7 +4,7 @@ FROM ${PYTHON_IMAGE}
 WORKDIR /app
 ARG PIP_INDEX_URL
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_DISABLE_PIP_VERSION_CHECK=1
-RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client \
+RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client supervisor \
     && rm -rf /var/lib/apt/lists/*
 COPY requirements-bindmount.txt requirements-silvaengine.txt ./
 # The key is available only during this RUN and is never copied into the image.
@@ -19,5 +19,8 @@ RUN --mount=type=secret,id=github_ssh_key,required=true,mode=0400 \
        pip install --index-url "${PIP_INDEX_URL}" --no-deps -r requirements-silvaengine.txt
 # Deployment-owned factory; installed framework packages remain unmodified.
 COPY scripts/__init__.py scripts/json_settings.py scripts/gateway_app.py /app/scripts/
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY logging.json /app/logging.json
+RUN mkdir -p /var/log/supervisor
 EXPOSE 8000
-CMD ["uvicorn", "scripts.gateway_app:create_app_from_env", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

@@ -70,6 +70,9 @@ services:
       # se-configdata takes precedence.
       - CAPABILITY_MCP_GATEWAY_BASE_URL=${CAPABILITY_MCP_GATEWAY_BASE_URL:-http://127.0.0.1:8000}
     volumes:
+      - ./logs:/var/log/supervisor
+      - ./supervisord.conf:/etc/supervisor/conf.d/supervisord.conf:ro
+      - ./logging.json:/app/logging.json:ro
       - type: bind
         source: ./env/se-configdata.local.json
         target: /app/env/se-configdata.local.json
@@ -77,13 +80,9 @@ services:
         bind:
           create_host_path: false
     command:
-      - uvicorn
-      - scripts.gateway_app:create_app_from_env
-      - --factory
-      - --host
-      - "0.0.0.0"
-      - --port
-      - "8000"
+      - /usr/bin/supervisord
+      - -c
+      - /etc/supervisor/conf.d/supervisord.conf
     depends_on:
       postgres:
         condition: service_healthy
@@ -94,7 +93,7 @@ services:
     restart: unless-stopped
     # In-flight GraphQL requests can take tens of seconds; allow enough drain
     # time on restart/pull
-    stop_grace_period: 30s
+    stop_grace_period: 45s
     healthcheck:
       test:
         [

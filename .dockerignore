@@ -1,5 +1,7 @@
 **
 !Dockerfile
+!supervisord.conf
+!logging.json
 !requirements-bindmount.txt
 !requirements-silvaengine.txt
 !scripts/

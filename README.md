@@ -352,3 +352,21 @@ Commit-scoped installations persist under `./git-packages`, mounted at
 the `pyhumps` dependency. When enabling hosted MCP execution, the connection
 plugin's JSON bootstrap must define an enabled `httpx_mcp` pool of type `httpx`;
 use the internal gateway as its base URL and supply credentials per request.
+
+## Persistent gateway and supervisor logs
+
+The gateway runs under supervisord. Compose mounts `./logs` at
+`/var/log/supervisor`; gateway application/access logs are written to
+`logs/banyanos-gateway.log`, and supervisor lifecycle events to
+`logs/supervisord.log`. Each file rotates at 50 MiB with ten backups.
+Gateway output also remains available through `docker logs banyanos-gateway`.
+Restrict host log-directory access because application logs may contain request details.
+
+```sh
+tail -f logs/banyanos-gateway.log logs/supervisord.log
+docker exec banyanos-gateway supervisorctl -c /etc/supervisor/conf.d/supervisord.conf status
+```
+
+Deploy with an image built from the updated Dockerfile, which installs supervisor;
+older gateway images cannot run the new Compose command. The mounted logging
+configuration is `logging.json`, and process management is in `supervisord.conf`.
